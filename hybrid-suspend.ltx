@@ -3,6 +3,7 @@
 \usepackage[margin=0.5in]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath}
+\usepackage{paralist}
 \usepackage{tikz}
 \usepackage{pgf-umlsd}
 
@@ -13,6 +14,11 @@
 \def\StateRunning{\textsc{Running}}
 \def\StateAsyncSuspendRequested{\textsc{AsyncSuspendRequested}}
 \def\StateAsyncSuspended{\textsc{AsyncSuspended}}
+\def\StateSelfSuspended{\textsc{SelfSuspended}}
+\def\StateBlocking{\textsc{Blocking}}
+\def\StateBlockingSuspendRequested{\textsc{BlockingSuspendRequested}}
+\def\StateBlockingSelfSuspended{\textsc{BlockingSelfSuspended}}
+
 
 \begin{document}
 \maketitle
@@ -25,9 +31,9 @@ the suspend victim participates passively.
 \subsection{With POSIX signals}
 
 \paragraph{Suspending} To suspend we switch the victim thread to
-\StateAsyncSuspendRequested{} and then send it the suspend signal and wait for
-notification that the pending operations completed.  (If there are multiple
-victims, the wait comes after suspend has been initiated for all of them.)
+\StateAsyncSuspendRequested{} and then send it the suspend signal and add it to the pending operations wait set.
+If there are multiple victims we do this for all of them and then wait for
+notification that the pending operations completed.
 
 The victim's signal handler switches the state to \StateAsyncSuspended{} and
 notifies the initiator and then calls \texttt{sigsuspend()} to wait until it is
@@ -37,27 +43,30 @@ sent a resume signal.
   \centering
   \begin{sequencediagram}
     \newthread{initiator}{Initiator}
-    \newinst{state}{Victim State Machine}
+    \newinst[1]{state}{Victim State Machine}
     \newthread{victim}{Victim}
     \newinst{sig}{Signal Handler}
     \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \begin{messcall}[1]{initiator}{request-suspend}{state}
+      \begin{messcall}{initiator}{request-suspend}{state}
       \end{messcall}
       \node (asrpre) at (ct2) {} ;
       \node (asr) at (rt2) {} ;
-      \node[anchor = west] at (asrpre) { \tiny\sc Running} ;
-      \node[anchor = west] at (asr) { \tiny\sc AsyncSuspendRequested } ;
+      \node[anchor = west] at (asrpre) { \tiny \StateRunning{}} ;
+      \node[anchor = west] at (asr) { \tiny \StateAsyncSuspendRequested{} } ;
 
       \mess[1]{initiator}{{tkill()}}{victim}
+      \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
+      \end{call}
     \end{call}
     \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
+      \prelevel\prelevel\prelevel\prelevel
       \begin{call}{victim}{handler}{sig}{}
         \begin{messcall}{sig}{async-suspended}{state}
         \end{messcall}
         \node (asuspre) at (ct3) {} ;
         \node (asus) at (rt3) {} ;
-        \node[anchor = east] at (asuspre) { \tiny\sc AsyncSuspendRequested } ;
-        \node[anchor = east] at (asus) { \tiny\sc AsyncSuspended } ;
+        \node[anchor = east] at (asuspre) { \tiny \StateAsyncSuspendRequested{} } ;
+        \node[anchor = east] at (asus) { \tiny \StateAsyncSuspended{} } ;
 
         \mess[1]{sig}{notify-initiator}{initiator}
         \begin{call}{sig}{{sigsuspend()}}{sig}{}
@@ -71,23 +80,27 @@ sent a resume signal.
 \end{figure}
 
 \paragraph{Resuming} To resume, the suspend sends the resume signal to the
-victim and waits for pending operations.  The victim switches the thread to
-\StateRunning{} and notifies the initiator.
+victim and waits for pending operations.  The signal breaks the victim out of \texttt{sigsuspend()}.
+The victim then switches the thread to \StateRunning{} and notifies the initiator.
 
 \begin{figure}[!h]
   \centering
   \begin{sequencediagram}
     \newthread{initiator}{Initiator}
-    \newinst{state}{Victim StateMachine}
+    \newinst[1]{state}{Victim State Machine}
     \newthread{victim}{Victim}
     \newinst{sig}{Signal Handler}
 
     \begin{call}{initiator}{begin-resume}{initiator}{}
       \mess[1]{initiator}{{tkill()}}{sig}
+      \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
+      \end{call}
     \end{call}
-    \prelevel\prelevel\prelevel\prelevel
-    \begin{call}{victim}{}{sig}{}
-      \postlevel\postlevel
+    \prelevel\prelevel\prelevel\prelevel\prelevel\prelevel
+    \begin{call}{victim}{handler}{sig}{}
+      \begin{call}{sig}{{sigsuspend()}}{sig}{}
+        \postlevel\postlevel
+      \end{call}
       \begin{messcall}{sig}{resume}{state}
       \end{messcall}
       \node (respre) at (ct2) {} ;
@@ -105,6 +118,145 @@ victim and waits for pending operations.  The victim switches the thread to
   \caption{POSIX signals async resume}
   \label{fig:async-resume-posix}
 \end{figure}
+
+\subsection{With native suspend}
+
+On Darwin and on Windows, we can use the operating system thread suspend calls to asynchronously suspend threads.
+In this case all transitions are preformed by the initiator.
+
+\paragraph{Suspending} The initiator switches the victim to
+\StateAsyncSuspendRequested{} and then calls the OS-specific suspend syscall on
+the victim thread.  After checking that the victim suspended
+successfully\footnote{There may be OS-specific reasons why a victim may not be
+  suspendable.}, the suspend initiator switches the victim to
+\StateAsyncSuspended{} \emph{without} adding it to the pending wait operation.
+Then the suspend initiator waits for pending ops (of which there should be
+none).
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+
+    \begin{call}{initiator}{begin-suspend}{initiator}{}
+      \begin{messcall}{initiator}{request-suspend}{state}
+      \end{messcall}
+      \node (asrpre) at (ct2) {} ;
+      \node (asr) at (rt2) {} ;
+      \node [anchor = west] at (asrpre) {\tiny \StateRunning {} } ;
+      \node [anchor = west] at (asr) {\tiny \StateAsyncSuspendRequested {} } ;
+
+      \mess[1]{initiator}{native-suspend-syscall}{victim} ;
+
+      \begin{messcall}{initiator}{async-suspended}{state}
+      \end{messcall}
+      \node (asuspre) at (ct2) {} ;
+      \node (asus) at (rt2) {} ;
+      \node [anchor = west] at (asuspre) {\tiny \StateAsyncSuspendRequested {} } ;
+      \node [anchor = west] at (asus) {\tiny \StateAsyncSuspended {} } ;
+    \end{call}
+    \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
+    \end{call}
+  \end{sequencediagram}
+  \caption{Native async suspend}
+  \label{fig:native-async-susp}
+\end{figure}
+
+\paragraph{Resuming} Similar to native suspend, the initiator switches the
+thread from \StateAsyncSuspended{} to \StateRunning and then uses the
+OS-specific resume syscall.  Nothing is added to the pending operations set, so
+the wait for pending operations after the resume returns without waiting.  We
+omit the figure for this case.
+
+\section{Blocking transitions}
+
+So far, we have 5 possible states for a thread:
+
+\begin{compactenum}
+\item Starting
+\item \StateRunning {}
+\item \StateAsyncSuspendRequested {}
+\item \StateAsyncSuspended {}
+\item Detached
+\end{compactenum}
+
+The starting and detached states indicate threads that should be ignored by the
+suspend machinery because they haven't started running yet, or because they are
+no longer allowed to run any code.
+
+In \StateAsyncSuspended {} the victim thread is not executing any code.  In the
+other two states, the thread is running in a \emph{GC Unsafe} thread state.
+
+\paragraph{GC Unsafe thread state} A GC Unsafe thread may read and write
+managed memory at any time.  It may hold references to managed objects in
+registers.
+
+While any victim threads are in a GC Unsafe state, we cannot run the garbage collector.
+
+With async suspend the suspend initiator preempts all victim threads and (in an
+OS-specific manner) ensures that all references to managed objects are made
+visible to the GC.
+
+Classically with fully-preemptive suspend, Mono assumed that all mutator
+threads were always in a GC Unsafe state while they were running.
+
+\paragraph{GC Safe thread state} A GC Safe thread does not read or write any
+managed memory and does not hold references to managed objects in registers.
+
+An example of a thread that is potentially in a GC Safe state is a thread that
+calls a blocking system call (without passing any managed memory reference to
+the syscall).  Such a thread does not interfere with the GC until it returns.
+A suspend initiator is thus free to ignore threads while they're in a GC Safe
+state.
+
+We add the following 3 blocking states:
+\begin{compactenum}
+\item \StateBlocking {}
+\item \StateBlockingSuspendRequested {}
+\item \StateBlockingSelfSuspended {}
+\end{compactenum}
+
+Additionally, there is one more suspend state for a GC Unsafe thread: \StateSelfSuspended.
+
+The transitions from running states to blocking states are always performed by the victim thread itself.
+
+There are three kinds of transitions between running and blocking states and vice versa.
+
+\paragraph{Do Blocking} This is a transition from \StateRunning{} to \StateBlocking{].
+If the victim is \StateAsyncSuspendRequested{}, the transition is ignored, the
+victim must poll and self-suspend and then try again after resuming.
+
+\paragraph{Done Blocking}
+This is a transition from \StateBlocking{} to \StateRunning{}.
+If the victim is in \StateBlockingSuspendRequested{}, the transition is
+disallowed and the victim must poll and self-suspend.
+
+
+\paragraph{Abort Blocking} This is a transition from \StateBlocking{} to
+\StateRunning{}.  As with Done Blocking, the thread may be in
+\StateBlockingSuspendRequested{} and if so it must poll and self-suspend.
+Additionally, the thread may be in \StateRunning{} (in which case the abort is
+ignored), or \StateAsyncSuspendRequested{} (in which case the thread must poll
+and self-suspend and then ignore the abort request).  Abort Blocking is used to
+ensure that a thread is in a running state when it is unknown what its current
+state it.  (By contrast, a Done Blocking transition from a blocking state is a
+programmer error.)  Abort Blocking is most commonly used by Mono runtime APIs
+that may be called either by the runtime itself or by embedders.
+
+
+\section{Cooperative suspend}
+
+\subsection{Running threads}
+
+\subsection{Blocking threads}
+With full cooperative suspend, threads in blocking state are assumed 
+
+\section{Hybrid suspend - single victim}
+
+\section{Hybrid suspend - multiple victims - two phase suspend}
+
 
 
 \end{document}
