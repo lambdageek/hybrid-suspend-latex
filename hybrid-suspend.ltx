@@ -1,0 +1,40 @@
+\documentclass{article}
+\pagestyle{headings}
+\usepackage[margin=0.5in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{pgf-umlsd}
+
+\title{Hybrid Suspend}
+\date{\today}
+\author{Aleksey Kliger}
+
+\begin{document}
+\maketitle
+
+\section{Async suspend}
+
+Traditionally Mono used an asynchronous suspend mechanism.  With async suspend the suspend victim participates passively.
+
+\subsubsection{With POSIX signals}
+
+\begin{sequencediagram}
+  \newthread{initiator}{Initiator}
+  \newinst{state}{Victim State Machine}
+  \newthread{victim}{Victim}
+  \newinst{sig}{Signal Handler}
+  \begin{call}{initiator}{begin-suspend}{initiator}{}
+    \begin{messcall}[1]{initiator}{request-suspend}{state}
+    \end{messcall}
+    \node (asrpre) at (ct2) {} ;
+    \node (asr) at (rt2) {} ;
+    \node[anchor = west] at (asrpre) { \tiny\sc Running} ;
+    \node[anchor = west] at (asr) { \tiny\sc AsyncSuspendRequested } ;
+
+    \mess[1]{initiator}{{tkill()}}{victim}
+  \end{call}
+\end{sequencediagram}
+
+
+\end{document}
