@@ -10,31 +10,101 @@
 \date{\today}
 \author{Aleksey Kliger}
 
+\def\StateRunning{\textsc{Running}}
+\def\StateAsyncSuspendRequested{\textsc{AsyncSuspendRequested}}
+\def\StateAsyncSuspended{\textsc{AsyncSuspended}}
+
 \begin{document}
 \maketitle
 
 \section{Async suspend}
 
-Traditionally Mono used an asynchronous suspend mechanism.  With async suspend the suspend victim participates passively.
+Traditionally Mono used an asynchronous suspend mechanism.  With async suspend
+the suspend victim participates passively.
 
-\subsubsection{With POSIX signals}
+\subsection{With POSIX signals}
 
-\begin{sequencediagram}
-  \newthread{initiator}{Initiator}
-  \newinst{state}{Victim State Machine}
-  \newthread{victim}{Victim}
-  \newinst{sig}{Signal Handler}
-  \begin{call}{initiator}{begin-suspend}{initiator}{}
-    \begin{messcall}[1]{initiator}{request-suspend}{state}
-    \end{messcall}
-    \node (asrpre) at (ct2) {} ;
-    \node (asr) at (rt2) {} ;
-    \node[anchor = west] at (asrpre) { \tiny\sc Running} ;
-    \node[anchor = west] at (asr) { \tiny\sc AsyncSuspendRequested } ;
+\paragraph{Suspending} To suspend we switch the victim thread to
+\StateAsyncSuspendRequested{} and then send it the suspend signal and wait for
+notification that the pending operations completed.  (If there are multiple
+victims, the wait comes after suspend has been initiated for all of them.)
 
-    \mess[1]{initiator}{{tkill()}}{victim}
-  \end{call}
-\end{sequencediagram}
+The victim's signal handler switches the state to \StateAsyncSuspended{} and
+notifies the initiator and then calls \texttt{sigsuspend()} to wait until it is
+sent a resume signal.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+    \begin{call}{initiator}{begin-suspend}{initiator}{}
+      \begin{messcall}[1]{initiator}{request-suspend}{state}
+      \end{messcall}
+      \node (asrpre) at (ct2) {} ;
+      \node (asr) at (rt2) {} ;
+      \node[anchor = west] at (asrpre) { \tiny\sc Running} ;
+      \node[anchor = west] at (asr) { \tiny\sc AsyncSuspendRequested } ;
+
+      \mess[1]{initiator}{{tkill()}}{victim}
+    \end{call}
+    \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
+      \begin{call}{victim}{handler}{sig}{}
+        \begin{messcall}{sig}{async-suspended}{state}
+        \end{messcall}
+        \node (asuspre) at (ct3) {} ;
+        \node (asus) at (rt3) {} ;
+        \node[anchor = east] at (asuspre) { \tiny\sc AsyncSuspendRequested } ;
+        \node[anchor = east] at (asus) { \tiny\sc AsyncSuspended } ;
+
+        \mess[1]{sig}{notify-initiator}{initiator}
+        \begin{call}{sig}{{sigsuspend()}}{sig}{}
+          \postlevel
+        \end{call}
+      \end{call}
+    \end{call}
+  \end{sequencediagram}
+  \caption{POSIX signals async suspend}
+  \label{fig:async-susp-posix}
+\end{figure}
+
+\paragraph{Resuming} To resume, the suspend sends the resume signal to the
+victim and waits for pending operations.  The victim switches the thread to
+\StateRunning{} and notifies the initiator.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst{state}{Victim StateMachine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+
+    \begin{call}{initiator}{begin-resume}{initiator}{}
+      \mess[1]{initiator}{{tkill()}}{sig}
+    \end{call}
+    \prelevel\prelevel\prelevel\prelevel
+    \begin{call}{victim}{}{sig}{}
+      \postlevel\postlevel
+      \begin{messcall}{sig}{resume}{state}
+      \end{messcall}
+      \node (respre) at (ct2) {} ;
+      \node (res) at (rt2) {} ;
+      \node[anchor = east] at (respre) {\tiny \StateAsyncSuspended{} } ;
+      \node[anchor = east] at (res) {\tiny \StateRunning{} } ;
+
+      \mess[1]{sig}{notify-initiator}{initiator}
+    \end{call}
+    \prelevel\prelevel\prelevel
+    \begin{call}{initiator}{wait-for-pending-ops}{initiator}
+      \postlevel\postlevel\postlevel
+    \end{call}
+  \end{sequencediagram}
+  \caption{POSIX signals async resume}
+  \label{fig:async-resume-posix}
+\end{figure}
 
 
 \end{document}
