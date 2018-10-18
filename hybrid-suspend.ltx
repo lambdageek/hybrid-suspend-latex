@@ -1,6 +1,6 @@
 \documentclass{article}
 \pagestyle{headings}
-\usepackage[margin=0.5in]{geometry}
+\usepackage[margin=0.75in]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath}
 \usepackage{paralist}
@@ -18,6 +18,25 @@
 \def\StateBlocking{\textsc{Blocking}}
 \def\StateBlockingSuspendRequested{\textsc{BlockingSuspendRequested}}
 \def\StateBlockingSelfSuspended{\textsc{BlockingSelfSuspended}}
+
+% \StateTransition{initiator}{transition-name}{stateinst}{OldState}{NewState}{level}{anchor}
+\newcommand{\StateTransition}[7]{%
+  \begin{messcall}{#1}{#2}{#3}
+  \end{messcall}
+  \node (#3-pre) at (ct#6) {} ;
+  \node (#3-post) at (rt#6) {} ;
+  \node [anchor = #7] at (#3-pre) {\tiny #4 } ;
+  \node [anchor = #7] at (#3-post) {\tiny #5 } ;
+}
+% \StateTransitionR{initiator}{transition-name}{stateinst}{OldState}{NewState}{returnvalue}{level}{anchor}
+\newcommand{\StateTransitionR}[8]{%
+  \begin{call}{#1}{#2}{#3}{#6}
+  \end{call}
+  \node (#3-pre) at (ct#7) {} ;
+  \node (#3-post) at (rt#7) {} ;
+  \node [anchor = #8] at (#3-pre) {\tiny #4 } ;
+  \node [anchor = #8] at (#3-post) {\tiny #5 } ;
+}
 
 
 \begin{document}
@@ -47,12 +66,7 @@ sent a resume signal.
     \newthread{victim}{Victim}
     \newinst{sig}{Signal Handler}
     \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \begin{messcall}{initiator}{request-suspend}{state}
-      \end{messcall}
-      \node (asrpre) at (ct2) {} ;
-      \node (asr) at (rt2) {} ;
-      \node[anchor = west] at (asrpre) { \tiny \StateRunning{}} ;
-      \node[anchor = west] at (asr) { \tiny \StateAsyncSuspendRequested{} } ;
+      \StateTransition{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{2}{west}
 
       \mess[1]{initiator}{{tkill()}}{victim}
       \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
@@ -61,12 +75,7 @@ sent a resume signal.
     \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
       \prelevel\prelevel\prelevel\prelevel
       \begin{call}{victim}{handler}{sig}{}
-        \begin{messcall}{sig}{async-suspended}{state}
-        \end{messcall}
-        \node (asuspre) at (ct3) {} ;
-        \node (asus) at (rt3) {} ;
-        \node[anchor = east] at (asuspre) { \tiny \StateAsyncSuspendRequested{} } ;
-        \node[anchor = east] at (asus) { \tiny \StateAsyncSuspended{} } ;
+        \StateTransition{sig}{async-suspended}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{3}{east}
 
         \mess[1]{sig}{notify-initiator}{initiator}
         \begin{call}{sig}{{sigsuspend()}}{sig}{}
@@ -101,12 +110,7 @@ The victim then switches the thread to \StateRunning{} and notifies the initiato
       \begin{call}{sig}{{sigsuspend()}}{sig}{}
         \postlevel\postlevel
       \end{call}
-      \begin{messcall}{sig}{resume}{state}
-      \end{messcall}
-      \node (respre) at (ct2) {} ;
-      \node (res) at (rt2) {} ;
-      \node[anchor = east] at (respre) {\tiny \StateAsyncSuspended{} } ;
-      \node[anchor = east] at (res) {\tiny \StateRunning{} } ;
+      \StateTransition{sig}{resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{2}{east}
 
       \mess[1]{sig}{notify-initiator}{initiator}
     \end{call}
@@ -141,21 +145,11 @@ none).
     \newthread{victim}{Victim}
 
     \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \begin{messcall}{initiator}{request-suspend}{state}
-      \end{messcall}
-      \node (asrpre) at (ct2) {} ;
-      \node (asr) at (rt2) {} ;
-      \node [anchor = west] at (asrpre) {\tiny \StateRunning {} } ;
-      \node [anchor = west] at (asr) {\tiny \StateAsyncSuspendRequested {} } ;
+      \StateTransition{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{2}{west}
 
       \mess[1]{initiator}{native-suspend-syscall}{victim} ;
 
-      \begin{messcall}{initiator}{async-suspended}{state}
-      \end{messcall}
-      \node (asuspre) at (ct2) {} ;
-      \node (asus) at (rt2) {} ;
-      \node [anchor = west] at (asuspre) {\tiny \StateAsyncSuspendRequested {} } ;
-      \node [anchor = west] at (asus) {\tiny \StateAsyncSuspended {} } ;
+      \StateTransition{initiator}{async-suspended}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{2}{west}
     \end{call}
     \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
     \end{call}
@@ -218,15 +212,66 @@ We add the following 3 blocking states:
 \item \StateBlockingSelfSuspended {}
 \end{compactenum}
 
-Additionally, there is one more suspend state for a GC Unsafe thread: \StateSelfSuspended.
+Additionally, there is one more suspend state for a GC Unsafe thread: \StateSelfSuspended {}.
 
 The transitions from running states to blocking states are always performed by the victim thread itself.
 
 There are three kinds of transitions between running and blocking states and vice versa.
 
-\paragraph{Do Blocking} This is a transition from \StateRunning{} to \StateBlocking{].
+\paragraph{Do Blocking} This is a transition from \StateRunning{} to \StateBlocking{}.
 If the victim is \StateAsyncSuspendRequested{}, the transition is ignored, the
 victim must poll and self-suspend and then try again after resuming.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \StateTransitionR{victim}{do-blocking}{state}{\StateRunning{}}{\StateBlocking{}}{Continue}{1}{east}
+  \end{sequencediagram}
+  \caption{Do blocking from \StateRunning {}}
+  \label{fig:do-blocking-running}
+\end{figure}
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \begin{sdblock}{Retry}{While \StateAsyncSuspendRequested{}}
+      \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{1}{east}
+      \begin{call}{victim}{poll}{victim}{}
+      \end{call}
+    \end{sdblock}
+  \end{sequencediagram}
+  \caption{Do blocking from \StateAsyncSuspendRequested {}}
+  \label{fig:do-blocking-running}
+\end{figure}
+
+\paragraph{Polling}
+
+When a thread tries to transition from \StateAsyncSuspendRequested{} to
+\StateBlocking{}, the state machine informs the victim that it must poll.  In
+this case the victim will notify the initiator that it is self-suspending and
+wait for resume.
+
+If using POSIX signals, it is possible for self-suspending and the delivery of
+the suspend signal to race.  In that case, the signal handler must ignore the
+the signal, and allow the thread to return from the signal handler to continue
+waiting in the self-suspended state.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+  \end{sequencediagram}
+  \caption{Self suspend raced with POSIX signal}
+  \label{fig:poll-vs-posix}
+\end{figure}
+
 
 \paragraph{Done Blocking}
 This is a transition from \StateBlocking{} to \StateRunning{}.
@@ -244,7 +289,6 @@ ensure that a thread is in a running state when it is unknown what its current
 state it.  (By contrast, a Done Blocking transition from a blocking state is a
 programmer error.)  Abort Blocking is most commonly used by Mono runtime APIs
 that may be called either by the runtime itself or by embedders.
-
 
 \section{Cooperative suspend}
 
