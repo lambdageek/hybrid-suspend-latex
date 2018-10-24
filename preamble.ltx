@@ -1,0 +1,26 @@
+\def\StateRunning{\textsc{Running}}
+\def\StateAsyncSuspendRequested{\textsc{AsyncSuspendRequested}}
+\def\StateAsyncSuspended{\textsc{AsyncSuspended}}
+\def\StateSelfSuspended{\textsc{SelfSuspended}}
+\def\StateBlocking{\textsc{Blocking}}
+\def\StateBlockingSuspendRequested{\textsc{BlockingSuspendRequested}}
+\def\StateBlockingSelfSuspended{\textsc{BlockingSelfSuspended}}
+
+% \StateTransition{initiator}{transition-name}{stateinst}{OldState}{NewState}{level}{anchor}
+\newcommand{\StateTransition}[7]{%
+  \begin{messcall}{#1}{#2}{#3}
+  \end{messcall}
+  \node (#3-pre) at (ct#6) {} ;
+  \node (#3-post) at (rt#6) {} ;
+  \node [anchor = #7] at (#3-pre) {\tiny #4 } ;
+  \node [anchor = #7] at (#3-post) {\tiny #5 } ;
+}
+% \StateTransitionR{initiator}{transition-name}{stateinst}{OldState}{NewState}{returnvalue}{level}{anchor}
+\newcommand{\StateTransitionR}[8]{%
+  \begin{call}{#1}{#2}{#3}{#6}
+  \end{call}
+  \node (#3-pre) at (ct#7) {} ;
+  \node (#3-post) at (rt#7) {} ;
+  \node [anchor = #8] at (#3-pre) {\tiny #4 } ;
+  \node [anchor = #8] at (#3-post) {\tiny #5 } ;
+}
