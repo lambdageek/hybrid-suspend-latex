@@ -6,6 +6,7 @@
 \usepackage{paralist}
 \usepackage{tikz}
 \usepackage{pgf-umlsd}
+\usepackage[noabbrev,capitalize]{cleveref}
 
 \title{Hybrid Suspend}
 \date{\today}
@@ -50,7 +51,7 @@ sent a resume signal.
     \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
       \prelevel\prelevel\prelevel\prelevel
       \begin{call}{victim}{handler}{sig}{}
-        \StateTransition{sig}{async-suspended}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{3}{east}
+        \StateTransitionR{sig}{finish-async-suspend}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{True}{3}{east}
 
         \mess[1]{sig}{notify-initiator}{initiator}
         \begin{call}{sig}{{sigsuspend()}}{sig}{}
@@ -63,9 +64,13 @@ sent a resume signal.
   \label{fig:async-susp-posix}
 \end{figure}
 
-\paragraph{Resuming} To resume, the suspend sends the resume signal to the
-victim and waits for pending operations.  The signal breaks the victim out of \texttt{sigsuspend()}.
-The victim then switches the thread to \StateRunning{} and notifies the initiator.
+\paragraph{Resuming} To resume, the suspend initiator requests to transition
+the victim thread state.  If the victim was async suspended, the transition
+succeeds and returns \texttt{InitAsyncResume} and the victim is placed in
+\StateRunning{}. The initiator then sends the resume signal to the victim and
+waits for pending operations.  The signal breaks the victim out of
+\texttt{sigsuspend()}.  The victim then notifies the initiator and returns from
+the suspend signal handler.
 
 \begin{figure}[!h]
   \centering
@@ -76,6 +81,7 @@ The victim then switches the thread to \StateRunning{} and notifies the initiato
     \newinst{sig}{Signal Handler}
 
     \begin{call}{initiator}{begin-resume}{initiator}{}
+      \StateTransitionR{initiator}{core-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
       \mess[1]{initiator}{{tkill()}}{sig}
       \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
       \end{call}
@@ -85,8 +91,6 @@ The victim then switches the thread to \StateRunning{} and notifies the initiato
       \begin{call}{sig}{{sigsuspend()}}{sig}{}
         \postlevel\postlevel
       \end{call}
-      \StateTransition{sig}{resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{2}{east}
-
       \mess[1]{sig}{notify-initiator}{initiator}
     \end{call}
     \prelevel\prelevel\prelevel
@@ -124,7 +128,7 @@ none).
 
       \mess[1]{initiator}{native-suspend-syscall}{victim} ;
 
-      \StateTransition{initiator}{async-suspended}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{2}{west}
+      \StateTransitionR{initiator}{finish-async-suspend}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{True}{2}{west}
     \end{call}
     \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
     \end{call}
@@ -180,22 +184,18 @@ the syscall).  Such a thread does not interfere with the GC until it returns.
 A suspend initiator is thus free to ignore threads while they're in a GC Safe
 state.
 
-We add the following 3 blocking states:
-\begin{compactenum}
-\item \StateBlocking {}
-\item \StateBlockingSuspendRequested {}
-\item \StateBlockingSelfSuspended {}
-\end{compactenum}
+We add the following 1 new GC Safe state: \StateBlocking.
 
-Additionally, there is one more suspend state for a GC Unsafe thread: \StateSelfSuspended {}.
+And as we shall see, we also need one more new suspended state: \StateSelfSuspended{}.
 
-The transitions from running states to blocking states are always performed by the victim thread itself.
+The transitions from running states to blocking states and vice-versa are
+always performed by the victim thread itself.
 
-There are three kinds of transitions between running and blocking states and vice versa.
+There are three kinds of transitions between running and blocking: do blocking,
+done blocking and abort blocking.  Additionally, there's a new polling
+operation that arises as a complication, discussed below.
 
-\paragraph{Do Blocking} This is a transition from \StateRunning{} to \StateBlocking{}.
-If the victim is \StateAsyncSuspendRequested{}, the transition is ignored, the
-victim must poll and self-suspend and then try again after resuming.
+\paragraph{Do Blocking} This is ordinarily a transition from \StateRunning{} to \StateBlocking{}, see \cref{fig:do-blocking-running}.
 
 \begin{figure}[!h]
   \centering
@@ -208,32 +208,20 @@ victim must poll and self-suspend and then try again after resuming.
   \label{fig:do-blocking-running}
 \end{figure}
 
-\begin{figure}[!h]
-  \centering
-  \begin{sequencediagram}
-    \newinst{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \begin{sdblock}{Retry}{While \StateAsyncSuspendRequested{}}
-      \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{1}{east}
-      \begin{call}{victim}{poll}{victim}{}
-      \end{call}
-    \end{sdblock}
-  \end{sequencediagram}
-  \caption{Do blocking from \StateAsyncSuspendRequested {}}
-  \label{fig:do-blocking-async-susp-req}
-\end{figure}
+A complication arises if the victim thread tries to enter GC Safe mode while a
+suspend initiator begins to suspend it at the same time.
+
+If the victim is \StateAsyncSuspendRequested{}, the transition to
+\StateBlocking{} isn't performed, and the victim is instructed that it must
+poll and self-suspend and then to try again after resuming until a transition from
+\StateRunning{} to \StateBlocking{} succeeds.
 
 \paragraph{Polling}
 
-When a thread tries to transition from \StateAsyncSuspendRequested{} to
-\StateBlocking{}, the state machine informs the victim that it must poll.  In
-this case the victim will notify the initiator that it is self-suspending and
-wait for resume.
-
-If using POSIX signals, it is possible for self-suspending and the delivery of
-the suspend signal to race.  In that case, the signal handler must ignore the
-the signal, and allow the thread to return from the signal handler to continue
-waiting in the self-suspended state.
+When a thread tries to do blocking, but it is in \StateAsyncSuspendRequested{},
+the state machine informs the victim that it must poll.  In this case the
+victim will notify the initiator that it is self-suspending and wait for
+resume.
 
 \begin{figure}[!h]
   \centering
@@ -241,31 +229,154 @@ waiting in the self-suspended state.
     \newthread{initiator}{Initiator}
     \newinst[1]{state}{Victim State Machine}
     \newthread{victim}{Victim}
-    \newinst{sig}{Signal Handler}
+    \begin{sdblock}{Retry}{While PollAndRetry}
+      \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{1}{east}
+      \begin{call}{victim}{poll}{victim}{}
+        \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{2}{east}
+        \mess[1]{victim}{notify-initiator}{initiator}
+        \begin{call}{victim}{wait-for-resume}{victim}{}
+          \postlevel
+        \end{call}
+      \end{call}
+    \end{sdblock}
   \end{sequencediagram}
-  \caption{Self suspend raced with POSIX signal}
+  \caption{Do blocking from \StateAsyncSuspendRequested {}}
+  \label{fig:do-blocking-async-susp-req}
+\end{figure}
+
+If using POSIX signals, it is possible for the suspend signal to be delivered
+after the thread begins trying to transition to blocking, but after its state
+has already been switch to \StateAsyncSuspendRequested{}.  In that case ---
+seen in \cref{fig:poll-vs-posix} --- when the signal finally arrives, the
+signal handler must ignore the the signal, and allow the thread to return from
+the signal handler to continue waiting in the self-suspended state.
+ 
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+    \begin{call}{initiator}{beging-suspend}{initiator}{}
+      \StateTransition{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{2}{west}
+      \prelevel
+      \begin{call}{victim}{enter-gc-safe}{victim}{}
+        \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{3}{east}
+        \begin{call}{victim}{poll}{victim}{}
+          \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{4}{east}
+          \mess[1]{victim}{notify-initiator}{initiator}
+          \mess[1]{initiator}{{tkill()}}{victim}
+          \prelevel\prelevel
+          \begin{call}{victim}{wait-for-resume}{victim}{}
+            \postlevel
+            \begin{call}{victim}{handler}{sig}{}
+              \StateTransitionR{sig}{finish-async-suspend}{state}{\StateSelfSuspended {}}{{}}{False}{6}{east}
+            \end{call}
+          \end{call}          
+        \end{call}
+      \end{call}
+    \end{call}
+  \end{sequencediagram}
+  \caption{Blocking raced with suspend; victim self-suspended }
   \label{fig:poll-vs-posix}
 \end{figure}
 
 
-\paragraph{Done Blocking}
-This is a transition from \StateBlocking{} to \StateRunning{}.
-If the victim is in \StateBlockingSuspendRequested{}, the transition is
-disallowed and the victim must poll and self-suspend.
 
+\paragraph{Done Blocking}
+Ordinarily, this is a transition from \StateBlocking{} to \StateRunning{}.
+
+When we discuss hybrid suspend, we will see that there are additional transitions in this case.
 
 \paragraph{Abort Blocking} This is a transition from \StateBlocking{} to
-\StateRunning{}.  As with Done Blocking, the thread may be in
-\StateBlockingSuspendRequested{} and if so it must poll and self-suspend.
-Additionally, the thread may be in \StateRunning{} (in which case the abort is
-ignored), or \StateAsyncSuspendRequested{} (in which case the thread must poll
-and self-suspend and then ignore the abort request).  Abort Blocking is used to
-ensure that a thread is in a running state when it is unknown what its current
-state it.  (By contrast, a Done Blocking transition from a blocking state is a
-programmer error.)  Abort Blocking is most commonly used by Mono runtime APIs
-that may be called either by the runtime itself or by embedders.
+\StateRunning{}.
+
+Abort blocking is often used to temporarily escape from GC Safe mode to GC
+Unsafe.  The most common usage of it is to implement the
+\texttt{MONO\_ENTER\_GC\_UNSAFE} macro.  The macro is used in Mono Runtime
+functions that may be called either from GC Safe or GC Unsafe state.  As a
+result, the abort blocking transition may (unlike the done blocking transition)
+be requested from \StateRunning{} or \StateAsyncSuspendRequested{}, too.  Abort
+Blocking is used to ensure that a thread is in a running state when it is
+unknown what its current state it.  (By contrast, a Done Blocking transition
+from a blocking state is a programmer error.)
+
+If the victim is in \StateRunning{}, the abort is simply ignored. The victim
+states in \StateRunning{} and records that \texttt{MONO\_EXIT\_GC\_UNSAFE} should
+also be a no-op.
+
+If the victim was in \StateAsyncSuspendRequested{}, the thread must poll and
+self-suspend and then ignore the abort request.  See
+\cref{fig:abort-blocking-suspend-requested}.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \begin{call}{victim}{abort-blocking}{victim}{}
+      \StateTransitionR{victim}{abort-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{IgnoreAndPoll}{2}{east}
+      \begin{call}{victim}{poll}{victim}{}
+        \postlevel
+      \end{call}
+    \end{call}
+  \end{sequencediagram}
+  \caption{Abort blocking from \StateAsyncSuspendRequested{}}
+  \label{fig:abort-blocking-suspend-requested}
+\end{figure}
+
+\subsection{How to suspend GC Safe threads}
+
+So far we've seen how to suspend GC Unsafe threads (ie those in
+\StateRunning{}), and also how to transition from GC Unsafe to GC Safe states
+(ie from \StateRunning{} to \StateBlocking{}).
+
+There is now the question of how to suspend GC Safe threads.
+
+There are four possibilities:
+
+\begin{enumerate}
+\item[Both preemptive] As with GC Unsafe threads, we could suspend GC Safe
+  threads preemptively.  This is equivalent to just using fully preemptive
+  suspend, but with extra bookkeeping for thread state transitions.  This will
+  require an extra \StateBlockingSuspendRequested{} state, and has the same
+  possibility of racing between POSIX signals and thread self-transitions.
+  This option is available in Mono by setting
+  \texttt{MONO\_THREADS\_SUSPEND=preemptive} and
+  \texttt{MONO\_ENABLE\_BLOCKING\_TRANSITION}.  It is not used in any
+  production build.
+\item[GC Unsafe preemptive, GC Safe running] GC Safe threads can simply be left
+  to run - after all they promised not to touch managed memory.  Unfortunately,
+  this mode is not usable with Mono's current embedding API: the API freely
+  returns pointers to managed memory.  Even if all entry and exit points
+  between Mono (managed and runtime code) and external native code are
+  instrumented to perform GC Safe/GC Unsafe transitions (or vice versa), live
+  pointers between API calls would dangle.  If embedder code were left to run,
+  it could call one Mono API function to obtain a pointer.  Then the GC could
+  move the managed object and the embedder would be left with a dangling
+  pointer.
+\item[GC Unsafe cooperative, GC Safe preemptive] This is
+  \texttt{MONO\_THREADS\_SUSPEND=hybrid}.  The advantage of this mode is that
+  internally mono can use cooperative suspend (see
+  \cref{sec:fully-cooperative}), while embedder and pinvoke'd code can be
+  oblivious.  Since embedder code would be preemptively suspended between calls
+  to the Mono API, it would not be able to modify managed objects at the same
+  time as the GC, and also pointers from the embedder to managed memory would
+  be visible to the GC.  This is our preferred mode for desktop Mono.
+\item[GC Unsafe cooperative, GC Safe running] This is Mono's fully cooperative
+  mode \texttt{MONO\_THREADS\_SUSPEND=cooperative}.  The disadvantage here is
+  that embedder code, not just runtime code, must be instrumented with GC
+  Safe/GC Unsafe transitions in order to have regions of code where managed
+  pointers between sequences of Mono API calls are live.  This is currently
+  used only on LLVM bitcode targets where async suspend is not usable and the
+  embedding code has already been instrumented.
+\end{enumerate}
 
 \section{Cooperative suspend}
+\label{sec:fully-cooperative}
+
+There is one more suspend state for a GC Unsafe thread: \StateSelfSuspended {}.
 
 \subsection{Running threads}
 
@@ -273,6 +384,44 @@ that may be called either by the runtime itself or by embedders.
 With full cooperative suspend, threads in blocking state are assumed 
 
 \section{Hybrid suspend - single victim}
+
+We have two new blocking states:
+\begin{compactenum}
+\item \StateBlockingSuspendRequested {}
+\item \StateBlockingSelfSuspended {}
+\end{compactenum}
+
+\paragraph{Done Blocking}
+If the victim is in \StateBlockingSuspendRequested{}, the transition is
+disallowed and the victim must poll and self-suspend. See \cref{fig:done-blocking-self-suspend}.
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \begin{call}{victim}{done-blocking}{victim}{}
+      \StateTransitionR{victim}{done-blocking}{state}{\StateBlockingSuspendRequested{}}{\StateBlockingSelfSuspended{}}{DoneBlockingWait}{2}{east}
+      \begin{call}{victim}{wait-for-resume}{victim}{}
+        \postlevel
+      \end{call}
+    \end{call}
+  \end{sequencediagram}
+  \caption{Done blocking thread self-suspending}
+  \label{fig:done-blocking-self-suspend}
+\end{figure}
+
+As with the Do Blocking transition, if using POSIX signals, a signal may arrive
+while the victim thread is waiting for resume after self-suspending.  The
+behavior is similar: the signal handler attempts to finish the async suspend,
+observes that the thread is already self-suspended and returns from the signal
+handler back to waiting for resume.
+
+\paragraph{Abort Blocking} As with Done Blocking, the thread may be in
+\StateBlockingSuspendRequested{} and if so it must poll and self-suspend.
+
+
 
 \section{Hybrid suspend - multiple victims - two phase suspend}
 
