@@ -418,7 +418,7 @@ suspend initiator simply ignores them until it is time to resume.
 \subsection{GC Safe / GC Unsafe transitions}
 
 With fully cooperative suspend, a thread in \StateBlockingSuspendRequested{},
-since it is running, may eventually need to transition to GC Unsafe mode -
+since it is running, may eventually need to transition to GC Unsafe mode ---
 either with done blocking or abort blocking.  In either case, the thread
 instead transitions to \StateBlockingSelfSuspended{} and waits for a resume
 notification.  See \cref{fig:done-blocking-self-suspend}.
@@ -451,21 +451,61 @@ We have just one new GC Safe suspended state: \StateBlockingSelfSuspended{}.
 
 With hybrid suspend, all 4 async and self-suspended states are used.
 
-\paragraph{Done Blocking}
+We have already seen all the building blocks for hybrid suspend:
+\begin{itemize}
+\item Threads in GC Unsafe mode cooperatively suspend: the transition from
+  \StateRunning{} to \StateAsyncSuspendRequested{} returns a value that tells the suspend
+  initiator to simply wait for the victim to self-suspend.
+\item Threads in GC Safe mode preemptively suspend: the transition from
+  \StateBlocking{} to \StateBlockingSuspendRequested{} returns a value that
+  tells the suspend initiator to preemptively suspend the victim.  This is
+  entirely analogous to the fully preemptive async suspend in
+  \cref{sec:fully-preemptive}, except using blocking states.\marginpar{Diagrams here?}
+\item Preemptive suspend of GC Safe threads can have a race between the victim
+  thread attempting to transition from GC Safe to GC Unsafe while at the same
+  time the suspend initiator is trying to send a signal.  This is where the new
+  \StateBlockingSelfSuspended{} state is used.\marginpar{Diagram here, for sure}
+\end{itemize}
 
-As with the Do Blocking transition, if using POSIX signals, a signal may arrive
-while the victim thread is waiting for resume after self-suspending.  The
-behavior is similar: the signal handler attempts to finish the async suspend,
-observes that the thread is already self-suspended and returns from the signal
-handler back to waiting for resume.
-
-\paragraph{Abort Blocking} As with Done Blocking, the thread may be in
-\StateBlockingSuspendRequested{} and if so it must poll and self-suspend.
-
+There is just one entirely new move: a thread in \StateBlockingAsyncSuspended{}
+must resume to \StateBlocking{}, rather than \StateRunning{}.  If a GC Safe
+thread is asynchronously suspended, it hasn't reached a GC Safe to GC Unsafe
+transition, so it should start back up in GC Safe mode.
 
 
 \section{Hybrid suspend - multiple victims - two phase suspend}
 
+While it may appear that we're done, there is one more complication with hybrid suspend.
 
+So far we have looked at simplified situations where there is a single suspend
+initiator (this is expected), and a single victim thread.  In reality, there
+may be multiple victim threads.
+
+If the suspend initiator needs to stop the entire world (for example, the
+garbage collector does this), it will first begin suspend operatiosn for all
+the victims, and then wait for the pending operations all at once at the end,
+rather than suspending each victim and waiting for it.
+
+With fully preemptive or fully cooperative suspend, this works fine.
+Preemptive suspend simply doesn't care what a victim might be doing.  Fully
+cooperative suspend cannot stop deadlocked threads, but neither does it
+introduce additional deadlocks.
+
+With hybrid suspend, however, it is possible to get a deadlock due to system
+calls.
+
+We normally, incorrectly, think of system library calls as black boxes.  But
+they may internally take locks.  Moreover, on Linux, even the dynamic linker
+may need to take locks, so even a function call to a shared library that is not
+yet loaded may need locking.
+
+This becomes relevant with hybrid suspend if two victim threads, one in GC Safe
+mode one in GC Unsafe, are to be suspended.
+
+The suspend initiator may suspend the threads in arbitrary order, and if it
+happens to suspend the the GC Safe thread preemptively while it is holding some
+system lock, and then attempt to suspend the GC Unsafe thread cooperatively
+while it is attempting to acquire the system lock, the entire ensemble will be
+deadlocked.\marginpar{TODO: Pics}
 
 \end{document}

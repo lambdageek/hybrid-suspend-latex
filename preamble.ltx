@@ -1,10 +1,16 @@
+% preemptive
 \def\StateRunning{\textsc{Running}}
 \def\StateAsyncSuspendRequested{\textsc{AsyncSuspendRequested}}
 \def\StateAsyncSuspended{\textsc{AsyncSuspended}}
+% with transitions
 \def\StateSelfSuspended{\textsc{SelfSuspended}}
 \def\StateBlocking{\textsc{Blocking}}
+% coop
 \def\StateBlockingSuspendRequested{\textsc{BlockingSuspendRequested}}
 \def\StateBlockingSelfSuspended{\textsc{BlockingSelfSuspended}}
+% hybrid
+\def\StateBlockingAsyncSuspended{\textsc{BlockingAsyncSuspended}}
+
 
 % \StateTransition{initiator}{transition-name}{stateinst}{OldState}{NewState}{level}{anchor}
 \newcommand{\StateTransition}[7]{%
