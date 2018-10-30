@@ -42,7 +42,7 @@ sent a resume signal.
     \newthread{victim}{Victim}
     \newinst{sig}{Signal Handler}
     \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \StateTransition{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{2}{west}
+      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
 
       \mess[1]{initiator}{{tkill()}}{victim}
       \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
@@ -124,7 +124,7 @@ none).
     \newthread{victim}{Victim}
 
     \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \StateTransition{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{2}{west}
+      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
 
       \mess[1]{initiator}{native-suspend-syscall}{victim} ;
 
@@ -259,7 +259,7 @@ the signal handler to continue waiting in the self-suspended state.
     \newthread{victim}{Victim}
     \newinst{sig}{Signal Handler}
     \begin{call}{initiator}{beging-suspend}{initiator}{}
-      \StateTransition{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{2}{west}
+      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
       \prelevel
       \begin{call}{victim}{enter-gc-safe}{victim}{}
         \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{3}{east}
