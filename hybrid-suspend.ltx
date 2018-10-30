@@ -376,24 +376,52 @@ There are four possibilities:
 \section{Cooperative suspend}
 \label{sec:fully-cooperative}
 
+With preemptive suspend, the victim thread has no control over when it may be
+suspended - if using native syscalls, it is simply stopped, if using POSIX
+signals, the signal handler may be invoked at any time.
+
+Cooperative suspend gives the victim thread control over its suspend behavior.
+Instead of receiving an asynchronous signal, the victim periodically polls to
+find out if a suspension has been requested.  The advantage is that the thread
+will only be suspended when it is ready.  The disadvantage is that if the
+victim performs an operation that takes an unbounded amount of time without
+polling, the entire Mono process hangs.
+
+To support fully-cooperative suspend and blocking operations, all code must be
+instrumented with transitions to GC Safe mode around blocking calls.
+Additionally, periodic polling operations must be inserted: Mono's JIT compiler
+inserts poll operations at each function and loop entry; native code must be
+hand-modified.
+
 There is one more suspend state for a GC Unsafe thread: \StateSelfSuspended {}.
+
+Thre is one more GC Safe state: \StateBlockingSuspendRequested{}.
+
+Thre is also a suspend state for a GC Safe thread: \StateBlockingSelfSuspended {}.
+
+Unsurprisingly, the GC Unsafe async suspend state \StateAsyncSuspended is not
+used in fully cooperative suspend.
 
 \subsection{Running threads}
 
+With fully cooperative suspend, threads in \StateRunning{} are transitioned to
+\StateAsyncSuspendRequested{} and the suspend initiator is instructed to wait.
+The victim thread is responsible for the transition from
+\StateAsyncSuspendRequested{} to \StateSelfSuspended{}.
+
 \subsection{Blocking threads}
-With full cooperative suspend, threads in blocking state are assumed 
 
-\section{Hybrid suspend - single victim}
+With fully cooperative suspend, threads in \StateBlocking{} are transitioned to
+\StateBlockingSuspendRequested{} and then allowed to continue running.  The
+suspend initiator simply ignores them until it is time to resume.
 
-We have two new blocking states:
-\begin{compactenum}
-\item \StateBlockingSuspendRequested {}
-\item \StateBlockingSelfSuspended {}
-\end{compactenum}
+\subsection{GC Safe / GC Unsafe transitions}
 
-\paragraph{Done Blocking}
-If the victim is in \StateBlockingSuspendRequested{}, the transition is
-disallowed and the victim must poll and self-suspend. See \cref{fig:done-blocking-self-suspend}.
+With fully cooperative suspend, a thread in \StateBlockingSuspendRequested{},
+since it is running, may eventually need to transition to GC Unsafe mode -
+either with done blocking or abort blocking.  In either case, the thread
+instead transitions to \StateBlockingSelfSuspended{} and waits for a resume
+notification.  See \cref{fig:done-blocking-self-suspend}.
 
 \begin{figure}[!h]
   \centering
@@ -411,6 +439,19 @@ disallowed and the victim must poll and self-suspend. See \cref{fig:done-blockin
   \caption{Done blocking thread self-suspending}
   \label{fig:done-blocking-self-suspend}
 \end{figure}
+
+
+\paragraph{Resuming from \StateBlockingSelfSuspended{}} When the suspend
+initiator resumes a \StateBlockingSelfSuspended{} victim thread, it finishes
+its GC Safe to GC Unsafe transition and continues in \StateRunning{}.
+
+\section{Hybrid suspend - single victim}
+
+We have just one new GC Safe suspended state: \StateBlockingSelfSuspended{}.
+
+With hybrid suspend, all 4 async and self-suspended states are used.
+
+\paragraph{Done Blocking}
 
 As with the Do Blocking transition, if using POSIX signals, a signal may arrive
 while the victim thread is waiting for resume after self-suspending.  The
