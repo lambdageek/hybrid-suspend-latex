@@ -3,6 +3,7 @@
 \usepackage[margin=0.75in]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{paralist}
 \usepackage{tikz}
 \usepackage{pgf-umlsd}
@@ -18,10 +19,99 @@
 \begin{document}
 \maketitle
 
-\section{Async suspend}
+\section{Unified suspend}
 
-Traditionally Mono used an asynchronous suspend mechanism.  With async suspend
-the suspend victim participates passively.
+The goal of the unified suspend subsystem in Mono is to provide mechanisms for
+temporarily pausing the execution of user code by threads associated with the
+Mono runtime.  Some clients of unified suspend are: the SGen garbage collector,
+the debugger engine, and the .NET APIs for suspending and resuming threads.
+
+Unified suspend works by storing a thread state value associated with each
+thread and by coordinated protocol between a \emph{suspend initiator}, one or
+more \emph{victim threads} and (in some configurations) \emph{POSIX signal handlers}
+or native syscalls for thread suspension.
+
+Unified suspend uses a \emph{finite state machine} (more precisely, a
+\emph{deterministic finite state transducer with output on transitions} aka a
+\emph{Mealy machine}).  A Mealy machine is a mathematical abstraction
+that consists of:
+\begin{itemize}
+\item A finite set of \emph{states} \(Q\)
+\item An \emph{input alphabet} \(\Sigma\)
+\item An \emph{output alphabet} \(\Gamma\)
+\item A relation \(\delta \subseteq \Sigma \times Q \times \Gamma \times Q\)
+  that defines the valid transitions: \((\sigma,q_1,\gamma,q_2)\in\delta\)
+  means that in state \(q_1\) with input \(\sigma\), the machine allows a
+  transition to state \(q_2\) and emits an output \(\gamma\).  For Mono, the
+  machine is deterministic - \(\delta : \Sigma \times Q \rightharpoonup \Gamma \times Q \) is a
+  partial function - for each \((\sigma,q_1)\) there is at most one
+  \((\gamma,q_2)\).
+\end{itemize}
+
+The Mono unified suspend state machine is implemented as a collection of
+transition functions \(f_\sigma : Q \rightharpoonup Q\times \Gamma\) where the input
+alphabet symbols are particular suspend protocol components, and the output
+alphabet symbols are an indication of how to proceed.  That is, for each input
+alphabet symbol, we have a separate function that takes the current thread
+state as an input and either rejects the transition and asserts, or updates the
+thread state to a new value and returns a return value that indicates the next
+step that the suspend protocol should take.
+
+We use the following diagram style to indicate interactions with the finite state machine:
+
+\begin{figure}[!h]
+  \centering
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{1}{west}
+  \end{sequencediagram}
+  \caption{Example of state machine interaction}
+  \label{fig:fsm-example-interaction}
+\end{figure}
+
+In this example the Initiator thread performs the ``request-suspend''
+transition action on the state machine of the victim thread.  The machine was
+currently in the \StateRunning{} state.  The transition was successful and the
+state machine is now in the \StateAsyncSuspendRequested{} state, and the
+suspend protocol should proceed using ``InitSusRunning'' output action.
+
+The output actions typically give some indication of what state transition
+happened - for example in this case the suspend initiator finds out that it
+should initiate the appropriate suspend mechanisms for a running thread.  If
+the thread was already suspended (perhaps it was stopped in the debugger), a
+return value might have been ``AlreadySuspended'', in which case the suspend
+initiator would record that fact and not do anything more to the thread.
+
+\subsection{Policy vs Mechanism}
+
+The state machine is concerned with \emph{policy} - the goal is to specify
+\emph{what} is to be done by a collection of protocols.  The \emph{mechanisms}
+specify \emph{how} something is to be done.  For example: the protocol to
+suspend a thread involves two actors --- the suspend initiator and the victim
+thread; the protocol is started by the suspend initiator by performing a
+``request-suspend'' transition; then the output action ``InitSusRunning''
+specifies that we should follow the policy of ``initiate suspension for a
+running thread.''  To implement this policy, the suspend initiator must invoke
+some mechanism.  That will elicit the victim to do some transition actions
+which will return output actions that specify what the victim is to do next.
+Then the victim will utilizing some mechanisms to put policy into practice.
+
+Some mechanisms we will explore are ``preemptive suspension using POSIX
+signals'', ``preemptive suspension using syscalls'', and ``cooperative
+suspension''.
+
+In the following sections we will introduce the states, the transition
+functions and output actions and the protocol for how they are to be
+interpreted by a series of examples.
+
+\section{Preemptive suspend}
+
+Traditionally Mono used a preemptive suspend\emph{For historical reasons we
+  also call this \emph{asynchronous suspension}, hence the state names below
+  mention \emph{async}.} mechanism.  With preemptive suspend the suspend victim
+participates passively - it does not have any control over \emph{when} it may
+be suspended.
 
 \subsection{With POSIX signals}
 
@@ -36,39 +126,16 @@ sent a resume signal.
 
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newthread{initiator}{Initiator}
-    \newinst[1]{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \newinst{sig}{Signal Handler}
-    \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
-
-      \mess[1]{initiator}{{tkill()}}{victim}
-      \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
-      \end{call}
-    \end{call}
-    \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
-      \prelevel\prelevel\prelevel\prelevel
-      \begin{call}{victim}{handler}{sig}{}
-        \StateTransitionR{sig}{finish-async-suspend}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{True}{3}{east}
-
-        \mess[1]{sig}{notify-initiator}{initiator}
-        \begin{call}{sig}{{sigsuspend()}}{sig}{}
-          \postlevel
-        \end{call}
-      \end{call}
-    \end{call}
-  \end{sequencediagram}
-  \caption{POSIX signals async suspend}
+ \input{diags/suspend-preemptive-posix.ltx}
+  \caption{POSIX signals preemptive suspend}
   \label{fig:async-susp-posix}
 \end{figure}
 
 \paragraph{Resuming} To resume, the suspend initiator requests to transition
-the victim thread state.  If the victim was async suspended, the transition
-succeeds and returns \texttt{InitAsyncResume} and the victim is placed in
-\StateRunning{}. The initiator then sends the resume signal to the victim and
-waits for pending operations.  The signal breaks the victim out of
+the victim thread state.  If the victim was preemptively suspended, the
+transition succeeds and returns \texttt{InitAsyncResume} and the victim is
+placed in \StateRunning{}. The initiator then sends the resume signal to the
+victim and waits for pending operations.  The signal breaks the victim out of
 \texttt{sigsuspend()}.  The victim then notifies the initiator and returns from
 the suspend signal handler.
 
@@ -81,7 +148,7 @@ the suspend signal handler.
     \newinst{sig}{Signal Handler}
 
     \begin{call}{initiator}{begin-resume}{initiator}{}
-      \StateTransitionR{initiator}{core-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
+      \StateTransitionR{initiator}{request-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
       \mess[1]{initiator}{{tkill()}}{sig}
       \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
       \end{call}
@@ -98,7 +165,7 @@ the suspend signal handler.
       \postlevel\postlevel\postlevel
     \end{call}
   \end{sequencediagram}
-  \caption{POSIX signals async resume}
+  \caption{POSIX signals preemptive resume}
   \label{fig:async-resume-posix}
 \end{figure}
 
@@ -118,22 +185,8 @@ none).
 
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newthread{initiator}{Initiator}
-    \newinst[1]{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-
-    \begin{call}{initiator}{begin-suspend}{initiator}{}
-      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
-
-      \mess[1]{initiator}{native-suspend-syscall}{victim} ;
-
-      \StateTransitionR{initiator}{finish-async-suspend}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{True}{2}{west}
-    \end{call}
-    \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
-    \end{call}
-  \end{sequencediagram}
-  \caption{Native async suspend}
+  \input{diags/suspend-preemptive-syscall.ltx}
+  \caption{Native preemptive suspend}
   \label{fig:native-async-susp}
 \end{figure}
 
@@ -507,5 +560,43 @@ happens to suspend the the GC Safe thread preemptively while it is holding some
 system lock, and then attempt to suspend the GC Unsafe thread cooperatively
 while it is attempting to acquire the system lock, the entire ensemble will be
 deadlocked.\marginpar{TODO: Pics}
+
+
+\appendix
+\section{Omitted details}
+
+We omitted some details.
+
+\paragraph{Suspend counts.}  All of the suspended states are actually
+multiplied: \(\{\StateSelfSuspended{}^k | k \in \mathbb{N}^+\}\).  That is,
+each suspended state has an associated positive suspend count.  If a thread was
+already suspended by a previous suspend initiator (for example the debugger)
+and needs to be suspended again (for example because there is a garbage
+collection in progress), we simply increment the suspend count
+\(\StateSelfSuspended{}^{k} \mapsto (\StateSelfSuspended{}^{k+1},
+\textrm{AlreadySuspended})\).  When resuming if the suspend count is greater
+than 1, we simply decrement it.  If it is exactly one, we perform the
+resumption.
+
+\paragraph{No safepoints bit.} Late in October 2018, we added a ``no safepoints
+allowed'' bit to the thread state.  When this bit is set, a \StateRunning{} or
+\StateAsyncSuspendRequested{} thread is not allowed to transition to
+\StateBlocking{} or to self-suspend (the bit is only used when we're using
+cooperative or hybrid suspension).  In all other states the bit must be
+cleared.  This is used to guard regions where a thread would like to guard
+against programmer error to ensure that no suspension is happening.  For
+example if bulk copying something to managed memory, we don't want to be
+interrupted by a GC.
+
+\paragraph{Details of notify-initiator and wait-for-pending-ops.}  The
+implementation uses a semaphore and an incrementing counter.  The suspend
+initiator increments the counter by 1 if it needs to wait for a victim to
+complete an operation.  The victim notifies the initiator by posting the
+semaphore by 1.  To wait for pending operations, the suspend initiator uses the
+value of the counter as the number of loop iterations in which it decrements
+the semaphore by 1.  Because the counter is only ever incremented, and because
+the semaphore decrement blocks until it is non-zero, there is no race even if
+the victim increments the semaphore before the initiator increments the
+counter.
 
 \end{document}

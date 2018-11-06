@@ -1,0 +1,125 @@
+\documentclass{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{pgf-umlsd}
+\usepackage{minted}
+
+\usemintedstyle{colorful}
+
+\newminted[monocode]{c}{beameroverlays,escapeinside=@@}
+
+\usetheme{Pittsburgh}
+
+\input{preamble.ltx}
+
+\title{Hybrid Suspend}
+\author{Aleksey Kliger}
+\date{Runtime Team Meeting\\2018 Nov 13}
+
+\newcommand{\ScaleSD}[1]{
+    \tikzset{
+      % add this style to all tikzpicture environments
+      every picture/.append style={
+        % enable scaling of nodes
+        transform shape,
+        % set scale factor
+        scale=#1
+      }
+    }
+  }
+  
+\begin{document}
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\section*{Outline}
+\begin{frame}
+  \tableofcontents
+\end{frame}
+
+\section{Suspend state machine}
+
+\begin{frame}
+  \frametitle{Mealy Machine}
+  \framesubtitle{Deterministic finite state transducer with output on transitions}
+
+  \begin{gather*}
+    (Q, \Sigma, \Gamma, \delta)\\
+    \delta : \Sigma \times Q \rightharpoonup \Gamma \times Q\\
+    \\
+    f_\sigma : Q \rightharpoonup \Gamma \times Q
+  \end{gather*}
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Mealy Machine}
+  \framesubtitle{Example transition function}
+  \begin{centering}
+  \begin{monocode*}{gobble=4}
+    MonoRequestSuspendResult
+    mono_threads_transition_@\textit{request\_suspension}@ (void);
+  \end{monocode*}
+  \end{centering}
+
+  \begin{eqnarray*}
+    \texttt{request-suspension}&\in \Sigma\\
+    \{\texttt{RequestSuspendRunning},\texttt{AlreadySuspend}\}&\in \Gamma
+  \end{eqnarray*}
+\end{frame}
+
+\section{``Classic'' preemptive suspend}
+
+\begin{frame}
+  \frametitle{Preemptive suspend - states and transitions}
+
+  \begin{itemize}
+  \item {\color{fg!15} {Starting}}
+  \item \StateRunning{}
+  \item \StateAsyncSuspendRequested{}
+  \item \StateAsyncSuspended{}
+  \item {\color{fg!15} {Detaching}}
+  \end{itemize}
+  
+  \begin{gather*}
+    \texttt{request-suspension}\\
+    \texttt{finish-async-suspend}\\
+    \texttt{request-resume}
+  \end{gather*}
+
+\end{frame}
+
+\subsection{Suspend}
+\begin{frame}
+  \frametitle{Suspend with syscalls}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/suspend-preemptive-syscall.ltx}
+  \end{center}
+
+\end{frame}
+
+\begin{frame}
+  \frametitle{Suspend with POSIX signals}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/suspend-preemptive-posix.ltx}
+  \end{center}
+
+\end{frame}
+
+\subsection{Resume}
+
+\begin{frame}
+  \frametitle{Resume}
+\end{frame}
+
+\section{Blocking transitions}
+
+\section{Cooperative suspend}
+
+\section{Hybrid suspend}
+
+\end{document}

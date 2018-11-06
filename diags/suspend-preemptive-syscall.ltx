@@ -1,0 +1,15 @@
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+
+    \begin{call}{initiator}{begin-suspend}{initiator}{}
+      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
+
+      \mess[1]{initiator}{native-suspend-syscall}{victim} ;
+
+      \StateTransitionR{initiator}{finish-async-suspend}{state}{\StateAsyncSuspendRequested{}}{\StateAsyncSuspended{}}{True}{2}{west}
+    \end{call}
+    \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
+    \end{call}
+  \end{sequencediagram}
