@@ -1,6 +1,9 @@
 \documentclass{beamer}
+\usepackage{stmaryrd}
+\usepackage{multirow}
 \usepackage[utf8]{inputenc}
 \usepackage{tikz}
+\usetikzlibrary{positioning,tikzmark}
 \usepackage{pgf-umlsd}
 \usepackage{minted}
 
@@ -38,40 +41,94 @@
   \tableofcontents
 \end{frame}
 
+\section{Motivation}
+
+\begin{frame}
+  \frametitle{What are we trying to do?}
+
+  Coordinate thread state modification.
+
+  Separate thread suspension policy from mechanism.
+
+  Clearly define roles.
+\end{frame}
+
+
+\begin{frame}
+  \frametitle{Roles}
+
+  \begin{description}
+  \item[Suspend initiator] induce one or several victim threads to suspend
+  \item[Victim] wants to run code
+    \begin{itemize}
+    \item interact with managed heap (GC Unsafe)
+    \item do a blocking syscall (GC Safe)\\
+      (take a lock)
+    \end{itemize}
+  \item[State machine] arbiter of conflicting goals
+    \begin{itemize}
+    \item actors inform state machine what they want to do
+    \item state machine defines protocol -- tells actors what to do\\
+      coordinated steps by initiator and victim to achieve those tasks
+    \end{itemize}
+  \end{description}
+\end{frame}
+
+
 \section{Suspend state machine}
 
 \begin{frame}
   \frametitle{Mealy Machine}
   \framesubtitle{Deterministic finite state transducer with output on transitions}
 
-  \begin{gather*}
-    (Q, \Sigma, \Gamma, \delta)\\
-    \delta : \Sigma \times Q \rightharpoonup \Gamma \times Q\\
-    \\
-    f_\sigma : Q \rightharpoonup \Gamma \times Q
-  \end{gather*}
+  \begin{center}
+    \begin{tikzpicture}[remember picture,
+      pointy/.style={thick,color=structure.fg,->},
+      pale background/.style={fill=white!95!yellow}
+      ]
+      \node[] at (0,0) {(\subnode{q}{\(Q\)}, \subnode{sig}{\(\Sigma\)}, \subnode{gam}{\(\Gamma\)}, \subnode{del}{\(\delta\)})} ;
+      \node[] (state label) at (-2.4, 1.2) {States} ;
+      \node[] (input label) at (1.8, 1) {Input alphabet} ;
+      \node[] (output label) at (-2.8, -1) {Output alphabet} ;
+      \node[] (transition label) at (2, -0.8) {Transition} ;
+      \draw[pointy] (state label) to [bend left] (q.north) ;
+      \draw[pointy] (input label.west) to [bend right] (sig.north) ;
+      \draw[pointy] (output label.east) to [bend right] (gam.south) ;
+      \draw[pointy] (transition label.west) to [bend left] (del.south) ;
+    \end{tikzpicture}
+    \begin{gather*}
+      \delta : \Sigma \times Q \rightharpoonup \Gamma \times Q\\
+      \Big\{\delta_\sigma : Q \rightharpoonup \Gamma \times Q\Big\}\\
+      \delta_\sigma (q_{in}) =
+        \begin{cases}
+          \lightning & \textrm{if no transition possible}\\
+          (\gamma,q_{out}) & \textrm {otherwise}
+        \end{cases}
+    \end{gather*}
+  \end{center}
 \end{frame}
 
 \begin{frame}[fragile]
   \frametitle{Mealy Machine}
   \framesubtitle{Example transition function}
-  \begin{centering}
-  \begin{monocode*}{gobble=4}
+  \begin{center}
+  \begin{monocode*}{gobble=4, fontsize=\footnotesize}
     MonoRequestSuspendResult
-    mono_threads_transition_@\textit{request\_suspension}@ (void);
+    mono_threads_transition_@\textit{request\_suspension}@ (MonoThreadInfo*);
   \end{monocode*}
-  \end{centering}
+  \end{center}
 
   \begin{eqnarray*}
-    \texttt{request-suspension}&\in \Sigma\\
-    \{\texttt{RequestSuspendRunning},\texttt{AlreadySuspend}\}&\in \Gamma
+    \texttt{request-suspension}&\in& \Sigma\\
+    \{\texttt{RequestSuspendRunning},\texttt{AlreadySuspend}\}&\in& \Gamma
   \end{eqnarray*}
 \end{frame}
 
 \section{``Classic'' preemptive suspend}
 
 \begin{frame}
-  \frametitle{Preemptive suspend - states and transitions}
+  \frametitle{Preemptive suspend}
+  \framesubtitle{States and transitions}
 
   \begin{itemize}
   \item {\color{fg!15} {Starting}}
@@ -80,7 +137,17 @@
   \item \StateAsyncSuspended{}
   \item {\color{fg!15} {Detaching}}
   \end{itemize}
-  
+
+  \begin{center}
+    \begin{tikzpicture}[
+      state/.style={shape=circle, fill, red, minimum size=.1cm, font=\tiny}
+      ]
+      \draw [step=.5cm,very thin, gray] (-1.5,-1.5) grid (1.5, 1.5) ;
+      \draw [state] (0,0) node {} ; % \StateRunning{}
+      \draw [state] (1,1) node {} ; % \StateAsyncSuspendRequested{}
+    \end{tikzpicture}
+  \end{center}
+
   \begin{gather*}
     \texttt{request-suspension}\\
     \texttt{finish-async-suspend}\\
@@ -114,12 +181,188 @@
 
 \begin{frame}
   \frametitle{Resume}
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/resume-preemptive-posix.ltx}
+  \end{center}
 \end{frame}
 
 \section{Blocking transitions}
 
+\begin{frame}
+  \frametitle{GC Safe}
+  \framesubtitle{\StateRunning{} vs \StateBlocking{}}
+
+
+  Treat threads that are interacting with the managed heap differently than
+  ones that aren't.
+
+\end{frame}
+
+\begin{frame}
+  \frametitle{Preliminiaries}
+
+  At this point, not concerned with  \emph{what} to do differently.
+
+  How do we transition from GC Unsafe to GC Safe in the presense of suspension.
+
+\end{frame}
+
+\begin{frame}
+  \frametitle{Blocking transition}
+  \framesubtitle{New States and transitions}
+
+  \begin{itemize}
+  \item \StateBlocking{}
+  \item \StateBlockingSuspendRequested{}
+  \item \StateSelfSuspended{}
+  \end{itemize}
+
+  \begin{gather*}
+    \texttt{do-blocking}\\
+    \texttt{done-blocking}\\
+    \texttt{abort-blocking}\\
+    \texttt{poll}
+  \end{gather*}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Do blocking}
+  \framesubtitle{Transition from GC Unsafe to GC Safe}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Self-suspending and polling}
+  \framesubtitle{Between async suspend and Do Blocking}
+ 
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/do-blocking-to-polling.ltx}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{POSIX complications}
+  \framesubtitle{Signal delivered after self-suspending}
+
+  \begin{center}
+    \ScaleSD{0.5}
+    \input{diags/do-blocking-signal-self-suspend.ltx}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Leaving GC Safe}
+  \framesubtitle{Done blocking vs Abort blocking}
+
+  \begin{description}
+  \item[Done blocking] ``Exit GC Safe''. Unconditional.  Programmer error if
+    already GC Unsafe.  Inverse of ``Do blocking''.
+  \item[Abort blocking] ``Enter GC Unsafe.'' Temporary escape back to GC
+    Unsafe.  For code that can be called from both modes.
+  \end{description}
+
+\end{frame}
+
+\begin{frame}
+  \frametitle{Done blocking}
+  \framesubtitle{Transition from GC Safe to GC Unsafe}
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newinst{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{victim}{\BoringCall{done-blocking}}{victim}{}
+        \StateTransitionR{victim}{done-blocking}{state}{\StateBlocking{}}{\StateRunning{}}{Ok}{2}{east}
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Abort blocking}
+  \framesubtitle{Temporarily escape from GC Safe to GC Unsafe}
+
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{center}
+        \ScaleSD{0.7}
+        \begin{sequencediagram}
+          \newinst{state}{Victim State Machine}
+          \newthread{victim}{Victim}
+          \begin{call}{victim}{\BoringCall{abort-blocking}}{victim}{}
+            \StateTransitionR{victim}{abort-blocking}{state}{\StateRunning{}}{{}}{Ignore}{2}{east}
+          \end{call}
+        \end{sequencediagram}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{center}
+        \ScaleSD{0.7}
+        \input{diags/abort-blocking-async-suspend-requested.ltx}
+      \end{center}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\section*{Interlude}
+
+\begin{frame}
+  \frametitle{Suspending GC Unsafe and GC Safe}
+  \framesubtitle{Not all combinations make sense}
+
+  \begin{tabular}{llcc}
+    & & \multicolumn{2}{c}{GC Safe} \\
+    & & \multicolumn{1}{|c}{Preemptive} & \multicolumn{1}{c}{Cooperative (boundary)} \\\cline{2-4}
+    \multirow{2}{*}{\rotatebox{90}{GC Unsafe}} & \multicolumn{1}{c|}{Preemptive} & {\color{green!80!black}\checkmark} & {\color{red!60!black}\(\lightning\)} \\
+    & \multicolumn{1}{c|}{Cooperative (safepoint)} & {\color{structure.fg}\checkmark} & \(\color{green!80!black}\checkmark\)
+  \end{tabular}
+\end{frame}
+
 \section{Cooperative suspend}
 
+\begin{frame}
+  \frametitle{How to suspend a GC Safe thread}
+  \framesubtitle{Just don't (Safepoint on exit)}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Safepointing GC Unsafe}
+\end{frame}
+
 \section{Hybrid suspend}
+
+\begin{frame}
+  \frametitle{Why hybrid suspend?}
+  
+\end{frame}
+
+\begin{frame}
+  \frametitle{How to hybrid suspend?}
+  \framesubtitle{New states for blocking async}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Oops}
+  \framesubtitle{Deadlock among 3 threads}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Two phase suspend}
+
+  \begin{enumerate}
+  \item Ask each thread to self-suspend.
+    \begin{itemize}
+    \item GC Unsafe threads will coop suspend
+    \item GC Safe threads --- best effort.
+    \end{itemize}
+  \item ``Mop up'' unsuspended threads
+    \begin{itemize}
+    \item It's just the GC Safe threads that should be async suspended
+    \end{itemize}
+  \end{enumerate}
+
+  No deadlocks unless user program already had deadlocks among managed threads.
+\end{frame}
 
 \end{document}

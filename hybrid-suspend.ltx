@@ -15,6 +15,8 @@
 
 \input{preamble.ltx}
 
+\colorlet{fg}{black}
+
 
 \begin{document}
 \maketitle
@@ -141,30 +143,7 @@ the suspend signal handler.
 
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newthread{initiator}{Initiator}
-    \newinst[1]{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \newinst{sig}{Signal Handler}
-
-    \begin{call}{initiator}{begin-resume}{initiator}{}
-      \StateTransitionR{initiator}{request-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
-      \mess[1]{initiator}{{tkill()}}{sig}
-      \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
-      \end{call}
-    \end{call}
-    \prelevel\prelevel\prelevel\prelevel\prelevel\prelevel
-    \begin{call}{victim}{handler}{sig}{}
-      \begin{call}{sig}{{sigsuspend()}}{sig}{}
-        \postlevel\postlevel
-      \end{call}
-      \mess[1]{sig}{notify-initiator}{initiator}
-    \end{call}
-    \prelevel\prelevel\prelevel
-    \begin{call}{initiator}{wait-for-pending-ops}{initiator}
-      \postlevel\postlevel\postlevel
-    \end{call}
-  \end{sequencediagram}
+  \input{diags/resume-preemptive-posix.ltx}
   \caption{POSIX signals preemptive resume}
   \label{fig:async-resume-posix}
 \end{figure}
@@ -278,21 +257,7 @@ resume.
 
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newthread{initiator}{Initiator}
-    \newinst[1]{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \begin{sdblock}{Retry}{While PollAndRetry}
-      \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{1}{east}
-      \begin{call}{victim}{poll}{victim}{}
-        \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{2}{east}
-        \mess[1]{victim}{notify-initiator}{initiator}
-        \begin{call}{victim}{wait-for-resume}{victim}{}
-          \postlevel
-        \end{call}
-      \end{call}
-    \end{sdblock}
-  \end{sequencediagram}
+  \input{diags/do-blocking-to-polling.ltx}
   \caption{Do blocking from \StateAsyncSuspendRequested {}}
   \label{fig:do-blocking-async-susp-req}
 \end{figure}
@@ -306,31 +271,7 @@ the signal handler to continue waiting in the self-suspended state.
  
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newthread{initiator}{Initiator}
-    \newinst[1]{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \newinst{sig}{Signal Handler}
-    \begin{call}{initiator}{beging-suspend}{initiator}{}
-      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
-      \prelevel
-      \begin{call}{victim}{enter-gc-safe}{victim}{}
-        \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{3}{east}
-        \begin{call}{victim}{poll}{victim}{}
-          \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{4}{east}
-          \mess[1]{victim}{notify-initiator}{initiator}
-          \mess[1]{initiator}{{tkill()}}{victim}
-          \prelevel\prelevel
-          \begin{call}{victim}{wait-for-resume}{victim}{}
-            \postlevel
-            \begin{call}{victim}{handler}{sig}{}
-              \StateTransitionR{sig}{finish-async-suspend}{state}{\StateSelfSuspended {}}{{}}{False}{6}{east}
-            \end{call}
-          \end{call}          
-        \end{call}
-      \end{call}
-    \end{call}
-  \end{sequencediagram}
+  \input{diags/do-blocking-signal-self-suspend.ltx}
   \caption{Blocking raced with suspend; victim self-suspended }
   \label{fig:poll-vs-posix}
 \end{figure}

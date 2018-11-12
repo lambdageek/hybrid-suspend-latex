@@ -1,0 +1,15 @@
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \begin{sdblock}{Retry}{While PollAndRetry}
+      \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{1}{east}
+      \begin{call}{victim}{\BoringCall{poll}}{victim}{}
+        \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{2}{east}
+        \mess[1]{victim}{notify-initiator}{initiator}
+        \begin{call}{victim}{wait-for-resume}{victim}{}
+          \postlevel
+        \end{call}
+      \end{call}
+    \end{sdblock}
+  \end{sequencediagram}

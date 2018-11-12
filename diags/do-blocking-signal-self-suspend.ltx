@@ -1,0 +1,25 @@
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+    \begin{call}{initiator}{\BoringCall{beging-suspend}}{initiator}{}
+      \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning {}}{\StateAsyncSuspendRequested {}}{InitSusRunning}{2}{west}
+      \prelevel
+      \begin{call}{victim}{enter-gc-safe}{victim}{}
+        \StateTransitionR{victim}{do-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{PollAndRetry}{3}{east}
+        \begin{call}{victim}{\BoringCall{poll}}{victim}{}
+          \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{4}{east}
+          \mess[1]{victim}{notify-initiator}{initiator}
+          \mess[1]{initiator}{{tkill()}}{victim}
+          \prelevel\prelevel
+          \begin{call}{victim}{wait-for-resume}{victim}{}
+            \postlevel
+            \begin{call}{victim}{handler}{sig}{}
+              \StateTransitionR{sig}{finish-async-suspend}{state}{\StateSelfSuspended {}}{{}}{False}{6}{east}
+            \end{call}
+          \end{call}          
+        \end{call}
+      \end{call}
+    \end{call}
+  \end{sequencediagram}

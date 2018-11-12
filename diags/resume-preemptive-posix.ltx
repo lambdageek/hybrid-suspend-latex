@@ -1,0 +1,24 @@
+  \begin{sequencediagram}
+    \newthread{initiator}{Initiator}
+    \newinst[1]{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \newinst{sig}{Signal Handler}
+
+    \begin{call}{initiator}{\BoringCall{begin-resume}}{initiator}{}
+      \StateTransitionR{initiator}{request-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
+      \mess[1]{initiator}{{tkill()}}{sig}
+      \begin{call}{initiator}{\BoringCall{add-to-pending-ops}}{initiator}{}
+      \end{call}
+    \end{call}
+    \prelevel\prelevel\prelevel\prelevel\prelevel\prelevel
+    \begin{call}{victim}{handler}{sig}{}
+      \begin{call}{sig}{{sigsuspend()}}{sig}{}
+        \postlevel\postlevel
+      \end{call}
+      \mess[1]{sig}{notify-initiator}{initiator}
+    \end{call}
+    \prelevel\prelevel\prelevel
+    \begin{call}{initiator}{\BoringCall{wait-for-pending-ops}}{initiator}
+      \postlevel\postlevel\postlevel
+    \end{call}
+  \end{sequencediagram}

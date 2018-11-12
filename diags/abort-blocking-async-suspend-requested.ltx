@@ -1,0 +1,10 @@
+  \begin{sequencediagram}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \begin{call}{victim}{\BoringCall{abort-blocking}}{victim}{}
+      \StateTransitionR{victim}{abort-blocking}{state}{\StateAsyncSuspendRequested{}}{{}}{IgnoreAndPoll}{2}{east}
+      \begin{call}{victim}{poll}{victim}{}
+        \postlevel
+      \end{call}
+    \end{call}
+  \end{sequencediagram}

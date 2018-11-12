@@ -8,7 +8,7 @@ all: hybrid-suspend.pdf hybrid-suspend-deck.pdf
 hybrid-suspend.pdf: hybrid-suspend.ltx
 	latexmk -pdf $(TEX_FLAGS) $<
 
-hybrid-suspend.pdf: hybrid-suspend-deck.ltx
+hybrid-suspend-deck.pdf: hybrid-suspend-deck.ltx
 	latexmk -pdf $(TEX_FLAGS) $<
 
 watch:
