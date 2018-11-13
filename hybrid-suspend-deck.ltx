@@ -20,7 +20,7 @@
 
 \input{preamble.ltx}
 
-\title{Hybrid Suspend}
+\title{Thread Suspend State Machine}
 \author{Aleksey Kliger}
 \date{2018 Nov 13 / Runtime Team Meeting}
 
@@ -58,7 +58,7 @@
 \end{frame}
 
 \section*{Outline}
-\begin{frame}
+\begin{frame}{Outline}
   \tableofcontents
 \end{frame}
 
@@ -347,23 +347,39 @@
 \end{frame}
 
 \begin{frame}
-  \frametitle{Done blocking}
+  \frametitle{Done \& Abort blocking}
   \framesubtitle{Transition from GC Safe to GC Unsafe}
-  \begin{center}
-    \ScaleSD{0.7}
-    \begin{sequencediagram}
-      \newinst{state}{Victim State Machine}
-      \newthread{victim}{Victim}
-      \begin{call}{victim}{\BoringCall{done-blocking}}{victim}{}
-        \StateTransitionR{victim}{done-blocking}{state}{\StateBlocking{}}{\StateRunning{}}{Ok}{2}{east}
-      \end{call}
-    \end{sequencediagram}
-  \end{center}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{center}
+        \ScaleSD{0.7}
+        \begin{sequencediagram}
+          \newinst{state}{Victim State Machine}
+          \newthread{victim}{Victim}
+          \begin{call}{victim}{\BoringCall{done-blocking}}{victim}{}
+            \StateTransitionR{victim}{done-blocking}{state}{\StateBlocking{}}{\StateRunning{}}{Ok}{2}{east}
+          \end{call}
+        \end{sequencediagram}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{center}
+        \ScaleSD{0.7}
+        \begin{sequencediagram}
+          \newinst{state}{Victim State Machine}
+          \newthread{victim}{Victim}
+          \begin{call}{victim}{\BoringCall{abort-blocking}}{victim}{}
+            \StateTransitionR{victim}{abort-blocking}{state}{\StateBlocking{}}{\StateRunning{}}{Ok}{2}{east}
+          \end{call}
+        \end{sequencediagram}
+      \end{center}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 \begin{frame}
-  \frametitle{Abort blocking}
-  \framesubtitle{Temporarily escape from GC Safe to GC Unsafe}
+  \frametitle{Abort blocking (ignored)}
+  \framesubtitle{Already in GC Unsafe}
 
   \begin{columns}
     \begin{column}{0.48\textwidth}
@@ -482,6 +498,9 @@
   
 \end{frame}
 
+\subsection{Preemptive suspend of GC Safe threads}
+
+
 \begin{frame}
   \frametitle{New state for hybrid suspend}
   \framesubtitle{No new transitions}
@@ -570,6 +589,8 @@
   \end{columns}
 \end{frame}
 
+\subsection{Suspending more than one thread}
+
 \begin{frame}
   \frametitle{Locks in unexpected places}
   \framesubtitle{But you shouldn't block in GC Unsafe...}
@@ -583,51 +604,133 @@
 
 \end{frame}
 
-\begin{frame}
-  \frametitle{Oops}
-  \framesubtitle{Deadlock among 3 threads}
+% \begin{frame}
+%   \frametitle{Oops}
+%   \framesubtitle{Deadlock among 3 threads}
 
-  \begin{itemize}
-  \item<1-> Suppose there are two threads \(A\) and \(B\)
-  \item<2-> Suppose they both need the same lock
-  \item<3-> Suppose \(A\) is in GC Safe (will be preemptively suspended), and \(B\) is in GC Unsafe (will be cooperatively suspended)
-  \item<4-> \(A\) takes the lock
-  \item<5-> Suspend initiator suspends \(A\) and transitions \(B\) to \StateAsyncSuspendRequested{}
-  \item<6-> \(B\) continues running and attempts to take the lock
-  \item<7-> {\color{red!60!black}\(\lightning\)}
-    \begin{itemize}
-    \item Suspend initiator waiting for \(B\) to self-suspend
-    \item \(B\) waiting for the lock held by \(A\)
-    \item \(A\) suspended, waiting to be resumed by the suspend initiator
-    \end{itemize}
-  \end{itemize}
+%   \begin{itemize}
+%   \item<1-> Suppose there are two threads \(A\) and \(B\)
+%   \item<2-> Suppose they both need the same lock
+%   \item<3-> Suppose \(A\) is in GC Safe (will be preemptively suspended), and \(B\) is in GC Unsafe (will be cooperatively suspended)
+%   \item<4-> \(A\) takes the lock
+%   \item<5-> Suspend initiator suspends \(A\) and transitions \(B\) to \StateAsyncSuspendRequested{}
+%   \item<6-> \(B\) continues running and attempts to take the lock
+%   \item<7-> {\color{red!60!black}\(\lightning\)}
+%     \begin{itemize}
+%     \item Suspend initiator waiting for \(B\) to self-suspend
+%     \item \(B\) waiting for the lock held by \(A\)
+%     \item \(A\) suspended, waiting to be resumed by the suspend initiator
+%     \end{itemize}
+%   \end{itemize}
+% \end{frame}
+
+\begin{frame}
+  \frametitle{Hybrid suspend deadlock}
+  \framesubtitle{Mutex accessed from GC Unsafe and GC Safe}
+  \begin{center}
+    \ScaleSD{0.5}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state2}{Victim State Machine A}
+      \newthread{victim2}{Victim A}
+      \newinst[2]{mutex}{Shared Mutex}
+      \newinst[2]{state1}{Victim State Machine B}
+      \newthread{victim1}{Victim B}
+      \begin{call}{victim2}{lock}{mutex}{}
+      \end{call}
+      \prelevel
+      \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+        \StateTransitionR{initiator}{request-suspend}{state1}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
+        \begin{call}{initiator}{add-to-pending-ops}{initiator}{}
+        \end{call}
+        \StateTransitionR{initiator}{request-suspend}{state2}{\StateBlocking{}}{\StateBlockingSuspendRequested{}}{InitSusBlocking}{2}{west}
+        \mess[1]{initiator}{suspend-syscall}{victim2}{}
+        \StateTransitionR{initiator}{finish-async-suspend}{state2}{\StateBlockingSuspendRequested{}}{\StateBlockingAsyncSuspended{}}{True}{2}{west}
+      \end{call}
+      \prelevel\prelevel\prelevel
+      \begin{messcall}{victim1}{lock}{mutex}
+      \end{messcall}
+      \prelevel\prelevel\prelevel
+      \begin{call}{initiator}{wait-for-pending-ops}{initiator}{}
+        \postlevel
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+  \begin{center}
+    \onslide<2->{{\color{red!60!black}\(\lightning\)}\quad Initiator waiting for B\\ B waiting for lock\quad A waiting for resume}
+  \end{center}
 \end{frame}
+
+% \begin{frame}
+%   \frametitle{Two phase suspend}
+
+%   \begin{enumerate}
+%   \item Ask each thread to self-suspend.
+%     \begin{itemize}
+%     \item GC Unsafe threads will coop suspend
+%     \item GC Safe threads --- best effort.
+%     \end{itemize}
+%   \item Wait for the GC Unsafe threads...
+%   \item ``Mop up'' unsuspended (GC Safe) threads with preemptive suspend.
+%   \end{enumerate}
+
+%   No deadlocks unless user program already had deadlocks among managed threads.
+
+%   No new states, one new trivial transition
+%   (\texttt{peek-blocking-suspend-requested}) to find GC Safe threads that
+%   haven't self-suspended.
+% \end{frame}
 
 \begin{frame}
   \frametitle{Two phase suspend}
-
-  \begin{enumerate}
-  \item Ask each thread to self-suspend.
-    \begin{itemize}
-    \item GC Unsafe threads will coop suspend
-    \item GC Safe threads --- best effort.
-    \end{itemize}
-  \item Wait for the GC Unsafe threads...
-  \item ``Mop up'' unsuspended (GC Safe) threads with preemptive suspend.
-  \end{enumerate}
-
-  No deadlocks unless user program already had deadlocks among managed threads.
-
-  No new states, one new trivial transition
-  (\texttt{peek-blocking-suspend-requested}) to find GC Safe threads that
-  haven't self-suspended.
+  \begin{center}
+    \ScaleSD{0.4}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state2}{Victim State Machine A}
+      \newthread{victim2}{Victim A}
+      \newinst[2]{state1}{Victim State Machine B}
+      \newthread{victim1}{Victim B}
+      \begin{sdblock}{Phase 1}{``Ask cordially''}
+        \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+          \StateTransitionR{initiator}{request-suspend}{state1}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
+          \begin{call}{initiator}{\BoringCall{add-to-pending-ops}}{initiator}{}
+          \end{call}
+          \StateTransitionR{initiator}{request-suspend}{state2}{\StateBlocking{}}{\StateBlockingSuspendRequested{}}{InitSusBlocking}{2}{west}
+      \end{call}
+      \prelevel\prelevel\prelevel\prelevel
+      \begin{call}{victim1}{\BoringCall{poll}}{victim1}{}
+        \StateTransitionR{victim1}{poll}{state1}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended{}}{NotifyAndWait}{2}{east}
+        \mess[1]{victim1}{notify-initiator}{initiator}
+        \prelevel\prelevel
+        \begin{call}{victim1}{wait-for-resume}{victim1}{}
+          \postlevel
+        \end{call}
+      \end{call}
+      \prelevel\prelevel\prelevel\prelevel
+      \begin{call}{initiator}{\BoringCall{wait-for-pending-ops}}{initiator}{}
+        \postlevel
+      \end{call}
+      \end{sdblock}
+      \begin{sdblock}{Phase 2}{``Peek and preempt''}
+        \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+            \StateTransitionR{initiator}{peek-blocking-suspend-requested}{state1}{\StateSelfSuspended{}}{}{False}{2}{west}
+            \StateTransitionR{initiator}{peek-blocking-suspend-requested}{state2}{\StateBlockingSuspendRequested{}}{}{True}{2}{west}
+            \mess[1]{initiator}{suspend syscall}{victim2}
+            \StateTransitionR{initiator}{finish-async-suspend}{state2}{\StateBlockingSuspendRequested{}}{\StateBlockingAsyncSuspended{}}{True}{2}{west}
+        \end{call}
+      \end{sdblock}
+    \end{sequencediagram}
+  \end{center}
 \end{frame}
 
 \section*{Conclusion}
 
 \begin{frame}
   \frametitle{Conclusion}
-
+  \framesubtitle<1>{\ }
+  \framesubtitle<2->{Thanks! Questions?}
+  
   \begin{itemize}
   \item Single initiator, multiple victims
   \item Victim state machine separates policy from mechanism
@@ -644,7 +747,7 @@
 
 \appendix
 
-\section*{Appendix}
+\section{Appendix}
 
 \begin{frame}
   \frametitle{Not in this talk}
