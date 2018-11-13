@@ -7,6 +7,11 @@
 \usepackage{pgf-umlsd}
 \usepackage{minted}
 
+% hide navigation controls on the bottom of the page
+\setbeamertemplate{navigation symbols}{}
+%\beamertemplatenavigationsymbolsempty
+\setbeamertemplate{footline}[frame number]
+
 \usemintedstyle{colorful}
 
 \newminted[monocode]{c}{beameroverlays,escapeinside=@@}
@@ -17,7 +22,23 @@
 
 \title{Hybrid Suspend}
 \author{Aleksey Kliger}
-\date{Runtime Team Meeting\\2018 Nov 13}
+\date{2018 Nov 13 / Runtime Team Meeting}
+
+
+\AtBeginSection[]
+{
+  \begin{frame}<beamer>{Outline}
+    \tableofcontents[currentsection]
+  \end{frame}
+}
+
+\AtBeginSubsection[]
+{
+  \begin{frame}<beamer>{Outline}
+    \tableofcontents[currentsection,currentsubsection]
+  \end{frame}
+}
+
 
 \newcommand{\ScaleSD}[1]{
     \tikzset{
@@ -58,18 +79,17 @@
   \frametitle{Roles}
 
   \begin{description}
-  \item[Suspend initiator] induce one or several victim threads to suspend
-  \item[Victim] wants to run code
+  \item[Suspend initiator] wants to induce one or several victim threads to suspend (and resume)\\
+    At most one initiator at a time
+  \item[Victim] wants to run code:
     \begin{itemize}
-    \item interact with managed heap (GC Unsafe)
-    \item do a blocking syscall (GC Safe)\\
-      (take a lock)
+    \item interact with managed heap
+    \item do a blocking syscall (take a lock)
     \end{itemize}
   \item[State machine] arbiter of conflicting goals
     \begin{itemize}
-    \item actors inform state machine what they want to do
-    \item state machine defines protocol -- tells actors what to do\\
-      coordinated steps by initiator and victim to achieve those tasks
+    \item defines protocol --- tells actors what to do
+    \item coordinates steps by initiator and victim to achieve goal
     \end{itemize}
   \end{description}
 \end{frame}
@@ -86,24 +106,24 @@
       pointy/.style={thick,color=structure.fg,->},
       pale background/.style={fill=white!95!yellow}
       ]
-      \node[] at (0,0) {(\subnode{q}{\(Q\)}, \subnode{sig}{\(\Sigma\)}, \subnode{gam}{\(\Gamma\)}, \subnode{del}{\(\delta\)})} ;
-      \node[] (state label) at (-2.4, 1.2) {States} ;
-      \node[] (input label) at (1.8, 1) {Input alphabet} ;
-      \node[] (output label) at (-2.8, -1) {Output alphabet} ;
-      \node[] (transition label) at (2, -0.8) {Transition} ;
-      \draw[pointy] (state label) to [bend left] (q.north) ;
-      \draw[pointy] (input label.west) to [bend right] (sig.north) ;
-      \draw[pointy] (output label.east) to [bend right] (gam.south) ;
-      \draw[pointy] (transition label.west) to [bend left] (del.south) ;
+      \node<1->[] at (0,0) {(\subnode{q}{\(Q\)}, \subnode{sig}{\(\Sigma\)}, \subnode{gam}{\(\Gamma\)}, \subnode{del}{\(\delta\)})} ;
+      \node<1->[] (state label) at (-2.4, 1.2) {States} ;
+      \node<1->[] (input label) at (1.8, 1) {Input alphabet} ;
+      \node<1->[] (output label) at (-2.8, -1) {Output alphabet} ;
+      \node<1->[] (transition label) at (2, -0.8) {Transition} ;
+      \draw<1->[pointy] (state label) to [bend left] (q.north) ;
+      \draw<1->[pointy] (input label.west) to [bend right] (sig.north) ;
+      \draw<1->[pointy] (output label.east) to [bend right] (gam.south) ;
+      \draw<1->[pointy] (transition label.west) to [bend left] (del.south) ;
     \end{tikzpicture}
     \begin{gather*}
-      \delta : \Sigma \times Q \rightharpoonup \Gamma \times Q\\
-      \Big\{\delta_\sigma : Q \rightharpoonup \Gamma \times Q\Big\}\\
-      \delta_\sigma (q_{in}) =
+      \onslide<2->{\delta : \Sigma \times Q \rightharpoonup \Gamma \times Q}\\
+      \onslide<3->{\Big\{\delta_\sigma : Q \rightharpoonup \Gamma \times Q \:\Big|\: \sigma \in \Sigma \Big\}}\\
+      \onslide<3->{\delta_\sigma (q_{in}) =
         \begin{cases}
           \lightning & \textrm{if no transition possible}\\
           (\gamma,q_{out}) & \textrm {otherwise}
-        \end{cases}
+        \end{cases}}
     \end{gather*}
   \end{center}
 \end{frame}
@@ -130,23 +150,25 @@
   \frametitle{Preemptive suspend}
   \framesubtitle{States and transitions}
 
+  Executing states
   \begin{itemize}
-  \item {\color{fg!15} {Starting}}
   \item \StateRunning{}
   \item \StateAsyncSuspendRequested{}
+  \end{itemize}
+  Suspended state
+  \begin{itemize}
   \item \StateAsyncSuspended{}
-  \item {\color{fg!15} {Detaching}}
   \end{itemize}
 
-  \begin{center}
-    \begin{tikzpicture}[
-      state/.style={shape=circle, fill, red, minimum size=.1cm, font=\tiny}
-      ]
-      \draw [step=.5cm,very thin, gray] (-1.5,-1.5) grid (1.5, 1.5) ;
-      \draw [state] (0,0) node {} ; % \StateRunning{}
-      \draw [state] (1,1) node {} ; % \StateAsyncSuspendRequested{}
-    \end{tikzpicture}
-  \end{center}
+  % \begin{center}
+  %   \begin{tikzpicture}[
+  %     state/.style={shape=circle, fill, red, minimum size=.1cm, font=\tiny}
+  %     ]
+  %     \draw [step=.5cm,very thin, gray] (-1.5,-1.5) grid (1.5, 1.5) ;
+  %     \draw [state] (0,0) node {} ; % \StateRunning{}
+  %     \draw [state] (1,1) node {} ; % \StateAsyncSuspendRequested{}
+  %   \end{tikzpicture}
+  % \end{center}
 
   \begin{gather*}
     \texttt{request-suspension}\\
@@ -159,6 +181,7 @@
 \subsection{Suspend}
 \begin{frame}
   \frametitle{Suspend with syscalls}
+  \framesubtitle{(implemented for Windows and Darwin)}
 
   \begin{center}
     \ScaleSD{0.7}
@@ -180,31 +203,53 @@
 \subsection{Resume}
 
 \begin{frame}
-  \frametitle{Resume}
+  \frametitle{Resume (POSIX signals)}
   \begin{center}
     \ScaleSD{0.7}
     \input{diags/resume-preemptive-posix.ltx}
   \end{center}
 \end{frame}
 
+\begin{frame}
+  \frametitle{Resume (syscalls)}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[1]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{begin-resume}}{initiator}{}
+        \StateTransitionR{initiator}{request-resume}{state}{\StateAsyncSuspended{}}{\StateRunning{}}{InitAsyncResume}{2}{west}
+        \mess[1]{initiator}{resume syscall}{victim}
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+\end{frame}
+
 \section{Blocking transitions}
 
 \begin{frame}
-  \frametitle{GC Safe}
-  \framesubtitle{\StateRunning{} vs \StateBlocking{}}
+  \frametitle{\StateRunning{} vs \StateBlocking{}}
+  \framesubtitle{Treat threads that are interacting with the managed heap differently than
+  ones that aren't}
 
-
-  Treat threads that are interacting with the managed heap differently than
-  ones that aren't.
+  \begin{description}
+  \item[GC Unsafe] It is \emph{unsafe} to run the GC because the thread may access the managed heap.
+  \item[GC Safe] It is \emph{safe} to run the GC right now because the thread does not access the managed heap.
+  \end{description}
 
 \end{frame}
 
 \begin{frame}
-  \frametitle{Preliminiaries}
+  \frametitle{GC Safe}
 
   At this point, not concerned with  \emph{what} to do differently.
 
-  How do we transition from GC Unsafe to GC Safe in the presense of suspension.
+  \vspace{0.5in}
+
+
+  \emph{How} do we transition from GC Unsafe to GC Safe in the presense of suspension?
 
 \end{frame}
 
@@ -212,9 +257,14 @@
   \frametitle{Blocking transition}
   \framesubtitle{New States and transitions}
 
+  GC Safe executing states
   \begin{itemize}
   \item \StateBlocking{}
   \item \StateBlockingSuspendRequested{}
+  \end{itemize}
+  
+  Suspended state
+  \begin{itemize}
   \item \StateSelfSuspended{}
   \end{itemize}
 
@@ -226,18 +276,47 @@
   \end{gather*}
 \end{frame}
 
+\subsection{Transitions to GC Safe}
+
 \begin{frame}
   \frametitle{Do blocking}
   \framesubtitle{Transition from GC Unsafe to GC Safe}
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/do-blocking.ltx}
+  \end{center}
 \end{frame}
 
 \begin{frame}
   \frametitle{Self-suspending and polling}
-  \framesubtitle{Between async suspend and Do Blocking}
+  \framesubtitle{Race between suspension request and Do Blocking}
  
   \begin{center}
     \ScaleSD{0.7}
     \input{diags/do-blocking-to-polling.ltx}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Resume from self-suspending}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{request-resume}}{initiator}{}
+        \StateTransitionR{initiator}{request-resume}{state}{\StateSelfSuspended{}}{\StateRunning{}}{InitSelfResume}{2}{west}
+        \mess[1]{initiator}{{post()}}{victim}
+
+      \end{call}
+      \prelevel\prelevel\prelevel
+      \begin{call}{victim}{wait-for-resume}{victim}
+        \postlevel\postlevel
+      \end{call}
+
+    \end{sequencediagram}
   \end{center}
 \end{frame}
 
@@ -251,6 +330,9 @@
   \end{center}
 \end{frame}
 
+
+\subsection{Transitions from GC Safe}
+
 \begin{frame}
   \frametitle{Leaving GC Safe}
   \framesubtitle{Done blocking vs Abort blocking}
@@ -258,10 +340,10 @@
   \begin{description}
   \item[Done blocking] ``Exit GC Safe''. Unconditional.  Programmer error if
     already GC Unsafe.  Inverse of ``Do blocking''.
-  \item[Abort blocking] ``Enter GC Unsafe.'' Temporary escape back to GC
-    Unsafe.  For code that can be called from both modes.
+  \item[Abort blocking] ``Enter GC Unsafe.''\\
+    Temporary escape back to GC Unsafe.\\
+    For code that could be called from both modes, but wants to ensure it will be in GC Unsafe.
   \end{description}
-
 \end{frame}
 
 \begin{frame}
@@ -305,46 +387,220 @@
   \end{columns}
 \end{frame}
 
-\section*{Interlude}
+\section{Interlude}
 
 \begin{frame}
   \frametitle{Suspending GC Unsafe and GC Safe}
-  \framesubtitle{Not all combinations make sense}
+  \framesubtitle{Choices largely orthogonal}
 
   \begin{tabular}{llcc}
     & & \multicolumn{2}{c}{GC Safe} \\
     & & \multicolumn{1}{|c}{Preemptive} & \multicolumn{1}{c}{Cooperative (boundary)} \\\cline{2-4}
-    \multirow{2}{*}{\rotatebox{90}{GC Unsafe}} & \multicolumn{1}{c|}{Preemptive} & {\color{green!80!black}\checkmark} & {\color{red!60!black}\(\lightning\)} \\
-    & \multicolumn{1}{c|}{Cooperative (safepoint)} & {\color{structure.fg}\checkmark} & \(\color{green!80!black}\checkmark\)
+    \multirow{2}{*}{\rotatebox{90}{GC Unsafe}} & \multicolumn{1}{c|}{Preemptive} & {\onslide<2->{\color{green!80!black}\checkmark}} & {\onslide<3->{\color{red!60!black}\(\lightning\)}} \\
+    & \multicolumn{1}{c|}{Cooperative (safepoint)} & {\onslide<5->{\color{green!80!black}\checkmark}} & {\onslide<4->{{\color{structure.fg}\checkmark} / {\color{red!60!black}\(\lightning\)}}}
   \end{tabular}
+  \vspace{2cm}
+  
+  \onslide<3->{{\color{red!60!black}\(\lightning\)} Embedding API returns raw managed pointers.}
+  
 \end{frame}
 
 \section{Cooperative suspend}
 
 \begin{frame}
-  \frametitle{How to suspend a GC Safe thread}
-  \framesubtitle{Just don't (Safepoint on exit)}
+  \frametitle{New State for GC Safe}
+  \framesubtitle{No new transitions}
+
+  Suspended state
+  \begin{itemize}
+  \item \StateBlockingSelfSuspended{}
+  \end{itemize}
 \end{frame}
 
 \begin{frame}
   \frametitle{Safepointing GC Unsafe}
+  \framesubtitle{We've seen these building blocks before.\\Different mechanism, same policy.}
+  \begin{center}
+    \ScaleSD{0.7}
+    \input{diags/suspend-cooperative-unsafe.ltx}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{How to suspend a GC Safe thread}
+  \framesubtitle{Just don't. Safepoint on done-/abort-blocking.}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+        \StateTransitionR{initiator}{request-suspend}{state}{\StateBlocking{}}{\StateBlockingSuspendRequested{}}{InitSusBlocking}{2}{west}
+      \end{call}
+      \begin{call}{victim}{\BoringCall{done-blocking}}{victim}{}
+        \StateTransitionR{victim}{done-blocking}{state}{\StateBlockingSuspendRequested{}}{\StateBlockingSelfSuspended{}}{Wait}{2}{east}
+        \begin{call}{victim}{wait-for-resume}{victim}{}
+          \postlevel
+        \end{call}
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+\end{frame}
+
+
+\begin{frame}
+  \frametitle{How to resume a GC Safe thread}
+  \framesubtitle{Analogous to GC Unsafe self-resume}
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{request-resume}}{initiator}{}
+        \StateTransitionR{initiator}{request-resume}{state}{\StateBlockingSelfSuspended{}}{\StateRunning{}}{InitBlockingResume}{2}{west}
+        \mess[1]{initiator}{{post()}}{victim}
+      \end{call}
+      \prelevel\prelevel\prelevel
+      \begin{call}{victim}{wait-for-resume}{victim}
+        \postlevel\postlevel
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
 \end{frame}
 
 \section{Hybrid suspend}
 
 \begin{frame}
   \frametitle{Why hybrid suspend?}
+
+  Make cooperative suspend work with existing API.
+
+  Some benefit of cooperative suspend for mostly-managed code.
   
 \end{frame}
 
 \begin{frame}
-  \frametitle{How to hybrid suspend?}
-  \framesubtitle{New states for blocking async}
+  \frametitle{New state for hybrid suspend}
+  \framesubtitle{No new transitions}
+
+  Suspended state
+  \begin{itemize}
+  \item \StateBlockingAsyncSuspended{}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Preemptive suspend of GC Safe thread}
+  \framesubtitle{Native syscall version}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[2]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+        \StateTransitionR{initiator}{request-suspend}{state}{\StateBlocking {}}{\StateBlockingSuspendRequested {}}{InitSusBlocking}{2}{west}
+
+        \mess[1]{initiator}{native-suspend-syscall}{victim} ;
+
+        \StateTransitionR{initiator}{finish-async-suspend}{state}{\StateBlockingSuspendRequested{}}{\StateBlockingAsyncSuspended{}}{True}{2}{west}
+      \end{call}
+      \begin{call}{initiator}{\BoringCall{wait-for-pending-ops}}{initiator}{}
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Resume GC Safe thread (hybrid suspend)}
+  \framesubtitle{Resumes into \StateBlocking{}, remains in GC Safe}
+
+  \begin{center}
+    \ScaleSD{0.7}
+    \begin{sequencediagram}
+      \newthread{initiator}{Initiator}
+      \newinst[1]{state}{Victim State Machine}
+      \newthread{victim}{Victim}
+      \begin{call}{initiator}{\BoringCall{begin-resume}}{initiator}{}
+        \StateTransitionR{initiator}{request-resume}{state}{\StateBlockingAsyncSuspended{}}{\StateBlocking{}}{InitAsyncResume}{2}{west}
+        \mess[1]{initiator}{resume syscall}{victim}
+      \end{call}
+    \end{sequencediagram}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{State machine summary}
+  
+  \begin{columns}
+    \begin{column}{0.59\textwidth}
+      \begin{itemize}
+      \item \StateRunning{}
+      \item \StateAsyncSuspendRequested{}
+      \item \StateAsyncSuspended{}
+      \end{itemize}
+      \begin{itemize}
+      \item \StateBlocking{}
+      \item \StateBlockingSuspendRequested{}
+      \item \StateSelfSuspended{}
+      \end{itemize}
+      \begin{itemize}
+      \item \StateBlockingSelfSuspended{}
+      \end{itemize}
+      \begin{itemize}
+      \item \StateBlockingAsyncSuspended{}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.39\textwidth}
+      \begin{gather*}
+        \texttt{request-suspension}\\
+        \texttt{finish-async-suspend}\\
+        \texttt{request-resume}\\
+        \\
+        \texttt{do-blocking}\\
+        \texttt{done-blocking}\\
+        \texttt{abort-blocking}\\
+        \texttt{poll}\\
+      \end{gather*}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Locks in unexpected places}
+  \framesubtitle{But you shouldn't block in GC Unsafe...}
+
+  \begin{itemize}
+  \item \texttt{malloc} takes a lock
+  \item Pthreads \texttt{sem\_post} takes a lock
+  \item \texttt{ld.so} takes a lock\\
+    (Potentially every function call takes a lock)
+  \end{itemize}
+
 \end{frame}
 
 \begin{frame}
   \frametitle{Oops}
   \framesubtitle{Deadlock among 3 threads}
+
+  \begin{itemize}
+  \item<1-> Suppose there are two threads \(A\) and \(B\)
+  \item<2-> Suppose they both need the same lock
+  \item<3-> Suppose \(A\) is in GC Safe (will be preemptively suspended), and \(B\) is in GC Unsafe (will be cooperatively suspended)
+  \item<4-> \(A\) takes the lock
+  \item<5-> Suspend initiator suspends \(A\) and transitions \(B\) to \StateAsyncSuspendRequested{}
+  \item<6-> \(B\) continues running and attempts to take the lock
+  \item<7-> {\color{red!60!black}\(\lightning\)}
+    \begin{itemize}
+    \item Suspend initiator waiting for \(B\) to self-suspend
+    \item \(B\) waiting for the lock held by \(A\)
+    \item \(A\) suspended, waiting to be resumed by the suspend initiator
+    \end{itemize}
+  \end{itemize}
 \end{frame}
 
 \begin{frame}
@@ -356,13 +612,70 @@
     \item GC Unsafe threads will coop suspend
     \item GC Safe threads --- best effort.
     \end{itemize}
-  \item ``Mop up'' unsuspended threads
-    \begin{itemize}
-    \item It's just the GC Safe threads that should be async suspended
-    \end{itemize}
+  \item Wait for the GC Unsafe threads...
+  \item ``Mop up'' unsuspended (GC Safe) threads with preemptive suspend.
   \end{enumerate}
 
   No deadlocks unless user program already had deadlocks among managed threads.
+
+  No new states, one new trivial transition
+  (\texttt{peek-blocking-suspend-requested}) to find GC Safe threads that
+  haven't self-suspended.
+\end{frame}
+
+\section*{Conclusion}
+
+\begin{frame}
+  \frametitle{Conclusion}
+
+  \begin{itemize}
+  \item Single initiator, multiple victims
+  \item Victim state machine separates policy from mechanism
+  \item State machine is extensible
+  \item POSIX Signals are a complication
+  \item GC Safe vs GC Unsafe thread states allow choices of suspend behavior
+  \item Hybrid suspend:
+    \begin{itemize}
+    \item Compromise for existing embedding API
+    \item Two-phase stop the world to avoid deadlock
+    \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\appendix
+
+\section*{Appendix}
+
+\begin{frame}
+  \frametitle{Not in this talk}
+
+  \begin{itemize}
+  \item Early and late thread runtime: starting and detaching states
+  \item Suspend count; ``no safepoints'' bit
+  \item Details of \texttt{notify-initiator} and \texttt{wait-for-pending-ops}
+  \item ``Critical'' regions --- retrying stop the world, \texttt{pulse} transition
+    (implementation currently in progress)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Where's the code}
+
+  In {\color{structure.fg}\verb+mono/utils/+}
+  \begin{description}
+  \item[\texttt{mono-threads-state-machine.c}] State machine transitions
+  \item[\texttt{mono-threads.c}] OS independent mechanisms
+  \item[\texttt{mono-threads-\{mach,windows\}.c}] Darwin and Win32 suspend syscalls
+  \item[\texttt{mono-threads-posix-signal.c}] POSIX suspend/resume signal handlers
+  \end{description}
+
+  In {\color{structure.fg}\verb+mono/metadata/+}
+  \begin{description}
+  \item[\texttt{sgen-stw.c}] Stop the world
+  \item[\texttt{threads.c}] Clients of single-thread suspend/resume: icalls, thread abort, thread interrupt, etc.
+  \end{description}
+
+ 
 \end{frame}
 
 \end{document}

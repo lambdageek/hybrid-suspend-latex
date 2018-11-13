@@ -231,11 +231,7 @@ operation that arises as a complication, discussed below.
 
 \begin{figure}[!h]
   \centering
-  \begin{sequencediagram}
-    \newinst{state}{Victim State Machine}
-    \newthread{victim}{Victim}
-    \StateTransitionR{victim}{do-blocking}{state}{\StateRunning{}}{\StateBlocking{}}{Continue}{1}{east}
-  \end{sequencediagram}
+  \input{diags/do-blocking.ltx}
   \caption{Do blocking from \StateRunning {}}
   \label{fig:do-blocking-running}
 \end{figure}
@@ -441,7 +437,7 @@ its GC Safe to GC Unsafe transition and continues in \StateRunning{}.
 
 \section{Hybrid suspend - single victim}
 
-We have just one new GC Safe suspended state: \StateBlockingSelfSuspended{}.
+We have just one new GC Safe suspended state: \StateBlockingAsyncSuspended{}.
 
 With hybrid suspend, all 4 async and self-suspended states are used.
 

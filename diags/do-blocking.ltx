@@ -1,0 +1,5 @@
+  \begin{sequencediagram}
+    \newinst{state}{Victim State Machine}
+    \newthread{victim}{Victim}
+    \StateTransitionR{victim}{do-blocking}{state}{\StateRunning{}}{\StateBlocking{}}{Continue}{1}{east}
+  \end{sequencediagram}

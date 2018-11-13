@@ -11,7 +11,7 @@
         \begin{call}{victim}{\BoringCall{poll}}{victim}{}
           \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{4}{east}
           \mess[1]{victim}{notify-initiator}{initiator}
-          \mess[1]{initiator}{{tkill()}}{victim}
+          \mess[1]{initiator}{kill}{victim}
           \prelevel\prelevel
           \begin{call}{victim}{wait-for-resume}{victim}{}
             \postlevel

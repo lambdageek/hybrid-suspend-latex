@@ -6,7 +6,7 @@
     \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
       \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
 
-      \mess[1]{initiator}{{tkill()}}{victim}
+      \mess[1]{initiator}{kill}{victim}
       \begin{call}{initiator}{\BoringCall{add-to-pending-ops}}{initiator}{}
       \end{call}
     \end{call}

@@ -1,0 +1,22 @@
+\begin{sequencediagram}
+  \newthread{initiator}{Initiator}
+  \newinst[2]{state}{Victim State Machine}
+  \newthread{victim}{Victim}
+  \begin{call}{initiator}{\BoringCall{begin-suspend}}{initiator}{}
+    \StateTransitionR{initiator}{request-suspend}{state}{\StateRunning{}}{\StateAsyncSuspendRequested{}}{InitSusRunning}{2}{west}
+    \begin{call}{initiator}{\BoringCall{add-to-pending-ops}}{initiator}{}
+    \end{call}
+  \end{call}
+  \begin{call}{initiator}{\BoringCall{wait-for-pending-ops}}{initiator}
+    \postlevel\postlevel\postlevel
+  \end{call}
+  \prelevel\prelevel\prelevel\prelevel\prelevel\prelevel\prelevel\prelevel
+  \begin{call}{victim}{\BoringCall{poll}}{victim}{}
+    \StateTransitionR{victim}{poll}{state}{\StateAsyncSuspendRequested{}}{\StateSelfSuspended {}}{NotifyAndWait}{2}{east}
+    \mess[1]{victim}{notify-initiator}{initiator}
+    \begin{call}{victim}{wait-for-resume}{victim}{}
+      \postlevel
+    \end{call}
+  \end{call}
+\end{sequencediagram}
+
